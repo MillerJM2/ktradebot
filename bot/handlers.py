@@ -88,6 +88,14 @@ def _format_expiry(dt) -> str:
     return dt.strftime("%Y-%m-%d %H:%M UTC")
 
 
+def _no_sub_text() -> str:
+    return (
+        "🔒 <b>Доступ к инструменту заблокирован</b>\n\n"
+        "Подписка: ❌\n\n"
+        "Обратитесь: <i>скоро будет ссылка</i>, для получения доступа."
+    )
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     user = await get_or_create_user(
@@ -103,16 +111,13 @@ async def cmd_start(message: Message) -> None:
             f"Доступно бирж: {len(feats.allowed_exchanges)}\n"
             f"Минимальный порог: {feats.min_threshold}%"
         )
+        text = f"👋 <b>Добро пожаловать в KTradeClub</b>\n\n{body}"
     else:
-        body = (
-            "У тебя пока <b>нет активной подписки</b>.\n"
-            "Чтобы начать получать сигналы — выбери тариф в разделе "
-            "<b>💎 Тарифы</b>."
+        text = (
+            f"👋 <b>Добро пожаловать в KTradeClub</b>\n\n"
+            f"{_no_sub_text()}"
         )
-    await message.answer(
-        f"👋 <b>Добро пожаловать в KTradeClub</b>\n\n{body}",
-        reply_markup=_main_keyboard(is_admin),
-    )
+    await message.answer(text, reply_markup=_main_keyboard(is_admin))
 
 
 @router.message(F.text == BTN_CABINET)
@@ -123,20 +128,22 @@ async def btn_cabinet(message: Message) -> None:
     tier_eff = effective_tier(user.tier, user.subscription_expires_at)
     feats = features(tier_eff)
     has_sub = tier_eff in ("basic", "pro", "vip", "admin")
-    paused_str = "на паузе ⏸" if user.paused else "активен ✅"
-    if has_sub:
-        sub_line = (
-            f"Тариф: <b>{feats.name}</b> до "
-            f"{_format_expiry(user.subscription_expires_at)}"
+    if not has_sub:
+        await message.answer(
+            _no_sub_text(),
+            reply_markup=_main_keyboard(_is_admin(message)),
         )
-    else:
-        sub_line = "Подписка: <b>нет активной</b>"
+        return
+    paused_str = "на паузе ⏸" if user.paused else "активен ✅"
+    sub_line = (
+        f"Тариф: <b>{feats.name}</b> до "
+        f"{_format_expiry(user.subscription_expires_at)}"
+    )
     await message.answer(
         f"👤 <b>Личный кабинет</b>\n\n"
         f"{sub_line}\n"
         f"Состояние: {paused_str}\n"
-        f"Порог: {user.threshold}%\n\n"
-        f"Используй кнопки ниже 👇",
+        f"Порог: {user.threshold}%",
         reply_markup=_cabinet_keyboard(),
     )
 
@@ -174,13 +181,7 @@ async def cmd_status(message: Message) -> None:
             f"Доступные биржи: {exchanges_line}"
         )
     else:
-        text = (
-            f"<b>Твой статус</b>\n\n"
-            f"Подписка: <b>нет активной</b>\n"
-            f"Состояние: {paused_str}\n\n"
-            f"Чтобы начать получать сигналы — выбери тариф в разделе "
-            f"<b>💎 Тарифы</b>."
-        )
+        text = _no_sub_text()
     if _is_admin(message):
         total = await count_users()
         text += f"\n\n👥 Всего пользователей: {total}"
