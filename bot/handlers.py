@@ -96,7 +96,6 @@ async def cmd_start(message: Message) -> None:
     is_admin = _is_admin(message)
     tier_eff = effective_tier(user.tier, user.subscription_expires_at)
     feats = features(tier_eff)
-    greeting = "админ" if is_admin else message.from_user.first_name or "друг"
     has_sub = tier_eff in ("basic", "pro", "vip", "admin")
     if has_sub:
         body = (
@@ -111,11 +110,7 @@ async def cmd_start(message: Message) -> None:
             "<b>💎 Тарифы</b>."
         )
     await message.answer(
-        f"👋 Привет, {greeting}!\n\n"
-        f"Бот ищет <b>арбитражные вилки</b> на 6 биржах "
-        f"(Binance, Bybit, OKX, KuCoin, Gate.io, MEXC).\n\n"
-        f"{body}\n\n"
-        f"Используй кнопки внизу 👇",
+        f"👋 <b>Добро пожаловать в KTradeClub</b>\n\n{body}",
         reply_markup=_main_keyboard(is_admin),
     )
 
