@@ -8,7 +8,16 @@ SERVICE_NAME="arbitrage-bot"
 echo "=== [1/6] Обновление пакетов и установка зависимостей системы ==="
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq python3 python3-venv python3-pip git ca-certificates
+apt-get install -y -qq software-properties-common curl ca-certificates git
+
+if ! command -v python3.12 >/dev/null 2>&1; then
+    add-apt-repository -y ppa:deadsnakes/ppa || true
+    apt-get update -qq
+fi
+apt-get install -y -qq python3.12 python3.12-venv python3.12-dev
+
+PYTHON_BIN="$(command -v python3.12)"
+echo "Будет использован: $PYTHON_BIN ($($PYTHON_BIN --version))"
 
 echo "=== [2/6] Клонирование репозитория в $INSTALL_DIR ==="
 if [ -d "$INSTALL_DIR/.git" ]; then
@@ -21,8 +30,15 @@ else
 fi
 
 echo "=== [3/6] Создание виртуального окружения и установка пакетов Python ==="
+if [ -d venv ]; then
+    VENV_PY_VERSION="$(./venv/bin/python --version 2>&1 || true)"
+    if [[ "$VENV_PY_VERSION" != *"3.12"* ]]; then
+        echo "Старое venv ($VENV_PY_VERSION) удаляю — нужно 3.12"
+        rm -rf venv
+    fi
+fi
 if [ ! -d venv ]; then
-    python3 -m venv venv
+    "$PYTHON_BIN" -m venv venv
 fi
 ./venv/bin/pip install --upgrade pip --quiet
 ./venv/bin/pip install -r requirements.txt --quiet
