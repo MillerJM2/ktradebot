@@ -1,4 +1,4 @@
-"""Точка входа: запускает Telegram-бот и фоновый цикл поиска вилок."""
+"""Точка входа: Telegram-бот + цикл поиска и верификации вилок."""
 import asyncio
 import sys
 
@@ -9,13 +9,16 @@ from loguru import logger
 
 from config import (
     ADMIN_TELEGRAM_ID,
+    MAX_CANDIDATES_FOR_VERIFY,
     POLL_INTERVAL_SECONDS,
     TELEGRAM_BOT_TOKEN,
 )
 from arbitrage.finder import find_spreads
+from arbitrage.verifier import verify_spread
 from bot.handlers import router
 from database.session import init_db
 from database.users_repo import get_active_users
+from exchanges.currencies_cache import cache as currencies_cache
 from exchanges.fetcher import fetch_all_tickers
 
 
@@ -35,25 +38,38 @@ async def _send_signal_safe(bot: Bot, user_id: int, text: str) -> None:
 
 
 async def arbitrage_loop(bot: Bot) -> None:
-    """Каждые N секунд опрашивает биржи и рассылает вилки активным юзерам."""
     logger.info("Фоновый цикл арбитража запущен")
     while True:
         try:
-            tickers = await fetch_all_tickers()
-            all_spreads = find_spreads(tickers, 0.0)
-            users = await get_active_users()
-            logger.info(
-                f"Активных юзеров: {len(users)}, всего вилок: {len(all_spreads)}"
-            )
+            await currencies_cache.refresh_if_needed()
 
+            tickers = await fetch_all_tickers()
+            raw_spreads = find_spreads(tickers, 0.5)
+            logger.info(f"Сырых кандидатов: {len(raw_spreads)}")
+
+            verify_tasks = [
+                verify_spread(
+                    s.symbol,
+                    s.buy_exchange, s.buy_volume_usd,
+                    s.sell_exchange, s.sell_volume_usd,
+                )
+                for s in raw_spreads[:MAX_CANDIDATES_FOR_VERIFY]
+            ]
+            verified = [
+                v for v in await asyncio.gather(*verify_tasks, return_exceptions=False)
+                if v is not None
+            ]
+            verified.sort(key=lambda v: v.net_profit_percent, reverse=True)
+            logger.info(f"Прошли все фильтры: {len(verified)}")
+
+            users = await get_active_users()
             send_tasks = []
             for user in users:
-                personal = [s for s in all_spreads if s.spread_percent >= user.threshold]
-                for spread in personal[:10]:
+                personal = [v for v in verified if v.net_profit_percent >= user.threshold]
+                for sig in personal[:5]:
                     send_tasks.append(
-                        _send_signal_safe(bot, user.telegram_id, spread.format_message())
+                        _send_signal_safe(bot, user.telegram_id, sig.format_message())
                     )
-
             if send_tasks:
                 await asyncio.gather(*send_tasks, return_exceptions=True)
         except Exception as e:
