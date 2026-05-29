@@ -9,6 +9,13 @@ ADMIN_TELEGRAM_ID = int(os.getenv("ADMIN_TELEGRAM_ID", "0"))
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///bot.db")
 
+CRYPTOBOT_API_TOKEN = os.getenv("CRYPTOBOT_API_TOKEN", "")
+CRYPTOBOT_BASE_URL = os.getenv(
+    "CRYPTOBOT_BASE_URL", "https://pay.crypt.bot/api"
+)
+SUBSCRIPTION_DAYS = 30
+INVOICE_POLL_INTERVAL_SECONDS = 30
+
 EXCHANGES = ["binance", "bybit", "okx", "kucoin", "gateio", "mexc"]
 
 QUOTE_CURRENCIES = ["USDT", "BTC"]

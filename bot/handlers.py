@@ -1,9 +1,18 @@
 """Обработчики команд и кнопок Telegram-бота (multi-user + tiers)."""
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
-from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    Message,
+    ReplyKeyboardMarkup,
+)
+from loguru import logger
 
-from config import ADMIN_TELEGRAM_ID
+from config import ADMIN_TELEGRAM_ID, SUBSCRIPTION_DAYS
+from database.invoices_repo import create_invoice as save_invoice
 from database.users_repo import (
     count_users,
     find_user_by_username,
@@ -13,6 +22,11 @@ from database.users_repo import (
     revoke_subscription,
     set_paused,
     set_threshold,
+)
+from subscriptions.crypto_bot import (
+    CryptoBotError,
+    create_invoice,
+    is_configured as cryptobot_configured,
 )
 from subscriptions.tiers import TIERS, effective_tier, features
 
@@ -190,6 +204,25 @@ async def btn_about(message: Message) -> None:
     )
 
 
+def _tariff_inline_keyboard() -> InlineKeyboardMarkup | None:
+    if not cryptobot_configured():
+        return None
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=f"🥉 Купить Basic — ${TIERS['basic'].price_usd:g}",
+            callback_data="buy:basic",
+        )],
+        [InlineKeyboardButton(
+            text=f"🥈 Купить Pro — ${TIERS['pro'].price_usd:g}",
+            callback_data="buy:pro",
+        )],
+        [InlineKeyboardButton(
+            text=f"🥇 Купить VIP — ${TIERS['vip'].price_usd:g}",
+            callback_data="buy:vip",
+        )],
+    ])
+
+
 @router.message(F.text == BTN_TARIFFS)
 async def btn_tariffs(message: Message) -> None:
     user = await get_or_create_user(
@@ -209,9 +242,63 @@ async def btn_tariffs(message: Message) -> None:
             f"     {len(t.allowed_exchanges)} бирж, порог от {t.min_threshold}%, "
             f"до {t.max_signals_per_cycle} сигналов за цикл"
         )
-    lines.append("")
-    lines.append("⏳ Оплата через CryptoBot скоро будет доступна.")
-    await message.answer("\n".join(lines), reply_markup=await _kb(message))
+    inline_kb = _tariff_inline_keyboard()
+    if inline_kb is None:
+        lines.append("")
+        lines.append("⏳ Оплата через CryptoBot скоро будет доступна.")
+    await message.answer(
+        "\n".join(lines),
+        reply_markup=await _kb(message),
+    )
+    if inline_kb is not None:
+        await message.answer(
+            "Выбери тариф для покупки на 30 дней:",
+            reply_markup=inline_kb,
+        )
+
+
+@router.callback_query(F.data.startswith("buy:"))
+async def cb_buy(callback: CallbackQuery) -> None:
+    await callback.answer()
+    tier = callback.data.split(":", 1)[1]
+    if tier not in ("basic", "pro", "vip"):
+        await callback.message.answer("❌ Неизвестный тариф.")
+        return
+    feats = features(tier)
+    user = await get_or_create_user(
+        callback.from_user.id, callback.from_user.username
+    )
+    try:
+        invoice = await create_invoice(
+            amount_usd=feats.price_usd,
+            description=f"Подписка {feats.name} на {SUBSCRIPTION_DAYS} дней",
+            payload=f"{user.telegram_id}:{tier}:{SUBSCRIPTION_DAYS}",
+        )
+    except CryptoBotError as e:
+        logger.warning(f"createInvoice failed: {e}")
+        await callback.message.answer(
+            "❌ Не удалось создать счёт. Попробуй позже или напиши в поддержку."
+        )
+        return
+    await save_invoice(
+        invoice_id=int(invoice["invoice_id"]),
+        user_id=user.telegram_id,
+        tier=tier,
+        days=SUBSCRIPTION_DAYS,
+        amount_usd=feats.price_usd,
+        pay_url=invoice["pay_url"],
+    )
+    pay_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Перейти к оплате", url=invoice["pay_url"])],
+    ])
+    await callback.message.answer(
+        f"💳 <b>Счёт создан</b>\n\n"
+        f"Тариф: <b>{feats.name}</b>\n"
+        f"Сумма: <b>${feats.price_usd:g}</b> в USDT\n"
+        f"Срок: {SUBSCRIPTION_DAYS} дней\n\n"
+        f"Жми кнопку — оплата в @CryptoBot. После оплаты подписка активируется автоматически в течение минуты.",
+        reply_markup=pay_kb,
+    )
 
 
 @router.message(F.text == BTN_REFERRAL)

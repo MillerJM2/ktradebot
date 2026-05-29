@@ -20,20 +20,20 @@ async_session_factory = async_sessionmaker(
 )
 
 
-async def _migrate_users() -> None:
-    """Добавляет недостающие колонки в таблицу users (для SQLite)."""
-    needed = {
-        "subscription_expires_at": "DATETIME",
-    }
+async def _add_missing_columns(table: str, columns: dict[str, str]) -> None:
     async with engine.begin() as conn:
-        cols = await conn.execute(text("PRAGMA table_info(users)"))
+        cols = await conn.execute(text(f"PRAGMA table_info({table})"))
         existing = {row[1] for row in cols.fetchall()}
-        for col_name, col_type in needed.items():
+        for col_name, col_type in columns.items():
             if col_name not in existing:
-                logger.info(f"Migration: adding users.{col_name}")
+                logger.info(f"Migration: adding {table}.{col_name}")
                 await conn.execute(
-                    text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
+                    text(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}")
                 )
+
+
+async def _migrate_users() -> None:
+    await _add_missing_columns("users", {"subscription_expires_at": "DATETIME"})
 
 
 async def init_db() -> None:
