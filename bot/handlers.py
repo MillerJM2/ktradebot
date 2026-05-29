@@ -5,7 +5,6 @@ from aiogram.types import (
     KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
-    ReplyKeyboardRemove,
 )
 
 from config import ADMIN_TELEGRAM_ID, DEFAULT_SPREAD_THRESHOLD
@@ -26,14 +25,32 @@ state = BotState()
 BTN_STATUS = "📊 Статус"
 BTN_PAUSE = "⏸ Пауза"
 BTN_RESUME = "▶️ Запустить"
-BTN_THRESHOLD = "🎯 Порог"
+BTN_THRESHOLD = "🎯 Порог спреда"
 BTN_DIAG = "🔍 Диагностика"
+
+BTN_ABOUT = "ℹ️ О боте"
+BTN_TARIFFS = "💎 Тарифы"
+BTN_REFERRAL = "🔗 Реферальная система"
+BTN_SUPPORT = "💼 Техническая поддержка"
+
 
 ADMIN_KEYBOARD = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text=BTN_STATUS), KeyboardButton(text=BTN_THRESHOLD)],
-        [KeyboardButton(text=BTN_PAUSE), KeyboardButton(text=BTN_RESUME)],
+        [KeyboardButton(text=BTN_STATUS)],
+        [KeyboardButton(text=BTN_THRESHOLD)],
+        [KeyboardButton(text=BTN_PAUSE)],
+        [KeyboardButton(text=BTN_RESUME)],
         [KeyboardButton(text=BTN_DIAG)],
+    ],
+    resize_keyboard=True,
+)
+
+USER_KEYBOARD = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text=BTN_ABOUT)],
+        [KeyboardButton(text=BTN_TARIFFS)],
+        [KeyboardButton(text=BTN_REFERRAL)],
+        [KeyboardButton(text=BTN_SUPPORT)],
     ],
     resize_keyboard=True,
 )
@@ -43,31 +60,84 @@ def _is_admin(message: Message) -> bool:
     return message.from_user is not None and message.from_user.id == ADMIN_TELEGRAM_ID
 
 
+def _keyboard_for(message: Message) -> ReplyKeyboardMarkup:
+    return ADMIN_KEYBOARD if _is_admin(message) else USER_KEYBOARD
+
+
 async def _deny(message: Message) -> None:
     await message.answer(
-        "⛔ У тебя нет доступа к этой команде.\n"
-        "Бот пока работает в закрытом режиме.",
-        reply_markup=ReplyKeyboardRemove(),
+        "⛔ Эта команда доступна только администратору.",
+        reply_markup=USER_KEYBOARD,
     )
 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
-    if not _is_admin(message):
+    if _is_admin(message):
         await message.answer(
-            "👋 Привет! Этот бот ищет арбитражные вилки между биржами.\n\n"
-            "Сейчас он в закрытом тестировании. Скоро откроется набор подписчиков — "
-            "следи за обновлениями."
+            "👋 Привет, админ! Бот ищет вилки на 6 биржах.\n\n"
+            "Используй кнопки внизу или команды:\n"
+            "/status — текущие настройки\n"
+            "/setthreshold N — порог спреда в %\n"
+            "/pause /resume — пауза/запуск\n"
+            "/diag — быстрая диагностика",
+            reply_markup=ADMIN_KEYBOARD,
         )
         return
     await message.answer(
-        "👋 Привет, админ! Бот ищет вилки на 6 биржах.\n\n"
-        "Используй кнопки внизу или команды:\n"
-        "/status — текущие настройки\n"
-        "/setthreshold N — порог спреда в %\n"
-        "/pause /resume — пауза/запуск\n"
-        "/diag — быстрая диагностика",
-        reply_markup=ADMIN_KEYBOARD,
+        "👋 Привет! Это бот для поиска <b>арбитражных вилок</b> между биржами.\n\n"
+        "Сейчас бот находится в закрытом тестировании. "
+        "Скоро откроется регистрация — выбирай раздел ниже, чтобы узнать подробности.",
+        reply_markup=USER_KEYBOARD,
+    )
+
+
+@router.message(F.text == BTN_ABOUT)
+async def btn_about(message: Message) -> None:
+    await message.answer(
+        "<b>О боте</b>\n\n"
+        "Бот отслеживает цены топ-100 криптовалют на 6 крупнейших биржах "
+        "(Binance, Bybit, OKX, KuCoin, Gate.io, MEXC) "
+        "и присылает уведомления о выгодных межбиржевых вилках.\n\n"
+        "Возможности:\n"
+        "• Реалтайм сигналы 24/7\n"
+        "• Настройка минимального спреда\n"
+        "• Учёт торговых комиссий\n"
+        "• Прямые ссылки на торговые страницы",
+        reply_markup=USER_KEYBOARD,
+    )
+
+
+@router.message(F.text == BTN_TARIFFS)
+async def btn_tariffs(message: Message) -> None:
+    await message.answer(
+        "<b>💎 Тарифы</b>\n\n"
+        "🆓 <b>Free</b> — 2 биржи, спред от 5%, задержка 5 мин\n"
+        "🥉 <b>Basic</b> — 4 биржи, спред от 2%, реалтайм — <b>$15/мес</b>\n"
+        "🥈 <b>Pro</b> — все 6 бирж, спред от 0.5% — <b>$40/мес</b>\n"
+        "🥇 <b>VIP</b> — Pro + автоторговля — <b>$100/мес</b>\n\n"
+        "⏳ Подписка пока недоступна — мы готовим запуск.",
+        reply_markup=USER_KEYBOARD,
+    )
+
+
+@router.message(F.text == BTN_REFERRAL)
+async def btn_referral(message: Message) -> None:
+    await message.answer(
+        "<b>🔗 Реферальная система</b>\n\n"
+        "Скоро ты сможешь приглашать друзей и получать "
+        "<b>20% от их подписок</b> на свой баланс.\n\n"
+        "⏳ Раздел в разработке.",
+        reply_markup=USER_KEYBOARD,
+    )
+
+
+@router.message(F.text == BTN_SUPPORT)
+async def btn_support(message: Message) -> None:
+    await message.answer(
+        "<b>💼 Техническая поддержка</b>\n\n"
+        "По любым вопросам пиши: @harisov102",
+        reply_markup=USER_KEYBOARD,
     )
 
 
@@ -79,7 +149,8 @@ async def cmd_status(message: Message) -> None:
         return
     paused_str = "на паузе ⏸" if state.paused else "активен ✅"
     await message.answer(
-        f"Статус: {paused_str}\n"
+        f"<b>Статус бота</b>\n\n"
+        f"Состояние: {paused_str}\n"
         f"Порог спреда: <b>{state.threshold}%</b>",
         reply_markup=ADMIN_KEYBOARD,
     )
@@ -117,7 +188,8 @@ async def btn_threshold(message: Message) -> None:
     await message.answer(
         f"Текущий порог: <b>{state.threshold}%</b>\n\n"
         f"Чтобы изменить — отправь команду:\n"
-        f"<code>/setthreshold 1.5</code>"
+        f"<code>/setthreshold 1.5</code>",
+        reply_markup=ADMIN_KEYBOARD,
     )
 
 
@@ -179,12 +251,7 @@ async def cmd_diag(message: Message) -> None:
 
 @router.message()
 async def fallback(message: Message) -> None:
-    if not _is_admin(message):
-        await message.answer(
-            "ℹ️ Бот пока в закрытом режиме. Команды недоступны."
-        )
-        return
     await message.answer(
-        "Не понял команду. Используй кнопки или /status, /diag, /setthreshold, /pause, /resume.",
-        reply_markup=ADMIN_KEYBOARD,
+        "Используй кнопки меню ниже 👇",
+        reply_markup=_keyboard_for(message),
     )
