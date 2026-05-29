@@ -11,7 +11,7 @@ from aiogram.types import (
 )
 from loguru import logger
 
-from config import ADMIN_TELEGRAM_ID, SUBSCRIPTION_DAYS
+from config import ADMIN_TELEGRAM_ID, PROMO_UNTIL_DATE
 from database.invoices_repo import create_invoice as save_invoice
 from database.users_repo import (
     count_users,
@@ -28,7 +28,7 @@ from subscriptions.crypto_bot import (
     create_invoice,
     is_configured as cryptobot_configured,
 )
-from subscriptions.tiers import TIERS, effective_tier, features
+from subscriptions.tiers import PAID_TIERS, TIERS, effective_tier, features
 
 
 router = Router()
@@ -104,7 +104,7 @@ async def cmd_start(message: Message) -> None:
     is_admin = _is_admin(message)
     tier_eff = effective_tier(user.tier, user.subscription_expires_at)
     feats = features(tier_eff)
-    has_sub = tier_eff in ("basic", "pro", "vip", "admin")
+    has_sub = tier_eff in PAID_TIERS or tier_eff == "admin"
     if has_sub:
         body = (
             f"Твой тариф: <b>{feats.name}</b>\n"
@@ -127,7 +127,7 @@ async def btn_cabinet(message: Message) -> None:
     )
     tier_eff = effective_tier(user.tier, user.subscription_expires_at)
     feats = features(tier_eff)
-    has_sub = tier_eff in ("basic", "pro", "vip", "admin")
+    has_sub = tier_eff in PAID_TIERS or tier_eff == "admin"
     if not has_sub:
         await message.answer(
             _no_sub_text(),
@@ -164,7 +164,7 @@ async def cmd_status(message: Message) -> None:
     )
     tier_eff = effective_tier(user.tier, user.subscription_expires_at)
     feats = features(tier_eff)
-    has_sub = tier_eff in ("basic", "pro", "vip", "admin")
+    has_sub = tier_eff in PAID_TIERS or tier_eff == "admin"
     paused_str = "на паузе ⏸" if user.paused else "активен ✅"
 
     if has_sub:
@@ -269,22 +269,21 @@ async def btn_about(message: Message) -> None:
     )
 
 
-def _tariff_inline_keyboard() -> InlineKeyboardMarkup | None:
-    if not cryptobot_configured():
-        return None
+def _tariff_card_text(tier_key: str) -> str:
+    t = features(tier_key)
+    bullets = "\n".join(f"▪️ {b}" for b in t.bullets)
+    return (
+        f"<b>Тариф {t.name}</b>\n\n"
+        f"{bullets}\n\n"
+        f"Акция до {PROMO_UNTIL_DATE}\n\n"
+        f"Старая цена: <s>{t.old_price_usd:g} USDT</s>\n"
+        f"Новая цена: <b>{t.price_usd:g} USDT</b>"
+    )
+
+
+def _buy_button(tier_key: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=f"🥉 Купить Basic — ${TIERS['basic'].price_usd:g}",
-            callback_data="buy:basic",
-        )],
-        [InlineKeyboardButton(
-            text=f"🥈 Купить Pro — ${TIERS['pro'].price_usd:g}",
-            callback_data="buy:pro",
-        )],
-        [InlineKeyboardButton(
-            text=f"🥇 Купить VIP — ${TIERS['vip'].price_usd:g}",
-            callback_data="buy:vip",
-        )],
+        [InlineKeyboardButton(text="Приобрести", callback_data=f"buy:{tier_key}")],
     ])
 
 
@@ -294,33 +293,24 @@ async def btn_tariffs(message: Message) -> None:
         message.from_user.id, message.from_user.username
     )
     tier_eff = effective_tier(user.tier, user.subscription_expires_at)
-    has_sub = tier_eff in ("basic", "pro", "vip", "admin")
-    lines = ["<b>💎 Тарифы</b>", ""]
-    if has_sub:
-        lines.append(f"Твой текущий: <b>{features(tier_eff).name}</b>")
-        if user.subscription_expires_at:
-            lines.append(f"Действует до: {_format_expiry(user.subscription_expires_at)}")
+    if tier_eff in ("admin",):
+        header = f"💎 <b>Тарифы</b>\n\nТвой текущий: <b>{features(tier_eff).name}</b>"
+    elif tier_eff in PAID_TIERS:
+        header = (
+            f"💎 <b>Тарифы</b>\n\n"
+            f"Твой текущий: <b>{features(tier_eff).name}</b>\n"
+            f"Действует до: {_format_expiry(user.subscription_expires_at)}"
+        )
     else:
-        lines.append("У тебя пока <b>нет активной подписки</b>.")
-    lines.append("")
-    for key in ("basic", "pro", "vip"):
-        t = TIERS[key]
-        prefix = "👉 " if key == tier_eff else "    "
-        lines.append(f"{prefix}<b>{t.name}</b> — ${t.price_usd:g}/мес")
-    lines.append("")
-    lines.append("ℹ️ Подробнее о тарифах — в нашем канале (скоро).")
-    inline_kb = _tariff_inline_keyboard()
-    if inline_kb is None:
-        lines.append("")
-        lines.append("⏳ Оплата через CryptoBot скоро будет доступна.")
+        header = "💎 <b>Тарифы</b>\n\nУ тебя пока <b>нет активной подписки</b>."
     await message.answer(
-        "\n".join(lines),
+        header,
         reply_markup=_main_keyboard(_is_admin(message)),
     )
-    if inline_kb is not None:
+    for tier_key in PAID_TIERS:
         await message.answer(
-            "Выбери тариф для покупки на 30 дней:",
-            reply_markup=inline_kb,
+            _tariff_card_text(tier_key),
+            reply_markup=_buy_button(tier_key),
         )
 
 
@@ -328,41 +318,47 @@ async def btn_tariffs(message: Message) -> None:
 async def cb_buy(callback: CallbackQuery) -> None:
     await callback.answer()
     tier = callback.data.split(":", 1)[1]
-    if tier not in ("basic", "pro", "vip"):
+    if tier not in PAID_TIERS:
         await callback.message.answer("❌ Неизвестный тариф.")
         return
     feats = features(tier)
     user = await get_or_create_user(
         callback.from_user.id, callback.from_user.username
     )
+    if not cryptobot_configured():
+        await callback.message.answer(
+            "⏳ Оплата картой/криптой скоро будет доступна. Пока обратитесь по контакту из поддержки."
+        )
+        return
     try:
         invoice = await create_invoice(
             amount_usd=feats.price_usd,
-            description=f"Подписка {feats.name} на {SUBSCRIPTION_DAYS} дней",
-            payload=f"{user.telegram_id}:{tier}:{SUBSCRIPTION_DAYS}",
+            description=f"Подписка {feats.name} ({feats.duration_days} дней)",
+            payload=f"{user.telegram_id}:{tier}:{feats.duration_days}",
         )
     except CryptoBotError as e:
         logger.warning(f"createInvoice failed: {e}")
         await callback.message.answer(
-            "❌ Не удалось создать счёт. Попробуй позже или напиши в поддержку."
+            "❌ Не удалось создать счёт. Попробуй позже."
         )
         return
     await save_invoice(
         invoice_id=int(invoice["invoice_id"]),
         user_id=user.telegram_id,
         tier=tier,
-        days=SUBSCRIPTION_DAYS,
+        days=feats.duration_days,
         amount_usd=feats.price_usd,
         pay_url=invoice["pay_url"],
     )
     pay_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 Перейти к оплате", url=invoice["pay_url"])],
     ])
+    duration_str = "пожизненно" if feats.is_lifetime else f"{feats.duration_days} дней"
     await callback.message.answer(
         f"💳 <b>Счёт создан</b>\n\n"
         f"Тариф: <b>{feats.name}</b>\n"
-        f"Сумма: <b>${feats.price_usd:g}</b> в USDT\n"
-        f"Срок: {SUBSCRIPTION_DAYS} дней\n\n"
+        f"Сумма: <b>{feats.price_usd:g} USDT</b>\n"
+        f"Срок: {duration_str}\n\n"
         f"Жми кнопку — оплата в @CryptoBot. После оплаты подписка активируется автоматически в течение минуты.",
         reply_markup=pay_kb,
     )
@@ -396,13 +392,13 @@ async def cmd_grant(message: Message) -> None:
     if len(parts) != 4:
         await message.answer(
             "Использование: <code>/grant &lt;user_id|@username&gt; &lt;tier&gt; &lt;days&gt;</code>\n"
-            "Тарифы: free, basic, pro, vip\n"
-            "Пример: <code>/grant @ivanov pro 30</code>"
+            "Тарифы: base, standart, pro, premium, free\n"
+            "Пример: <code>/grant @ivanov pro 365</code>"
         )
         return
     target, tier, days_str = parts[1], parts[2], parts[3]
-    if tier not in ("free", "basic", "pro", "vip"):
-        await message.answer("❌ Тариф должен быть: free, basic, pro, vip")
+    if tier not in ("free", *PAID_TIERS):
+        await message.answer("❌ Тариф должен быть: base, standart, pro, premium, free")
         return
     try:
         days = int(days_str)

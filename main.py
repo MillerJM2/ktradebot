@@ -69,12 +69,15 @@ async def arbitrage_loop(bot: Bot) -> None:
             for user in users:
                 tier = effective_tier(user.tier, user.subscription_expires_at)
                 feats = features(tier)
+                if feats.max_signals_per_cycle == 0:
+                    continue
                 user_threshold = max(user.threshold, feats.min_threshold)
                 personal = [
                     v for v in verified
                     if v.net_profit_percent >= user_threshold
                     and v.buy_exchange in feats.allowed_exchanges
                     and v.sell_exchange in feats.allowed_exchanges
+                    and v.symbol.split("/", 1)[1] in feats.quote_currencies
                 ]
                 for sig in personal[:feats.max_signals_per_cycle]:
                     send_tasks.append(

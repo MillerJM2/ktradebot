@@ -13,8 +13,8 @@ CRYPTOBOT_API_TOKEN = os.getenv("CRYPTOBOT_API_TOKEN", "")
 CRYPTOBOT_BASE_URL = os.getenv(
     "CRYPTOBOT_BASE_URL", "https://pay.crypt.bot/api"
 )
-SUBSCRIPTION_DAYS = 30
 INVOICE_POLL_INTERVAL_SECONDS = 30
+PROMO_UNTIL_DATE = "12.03.2026"
 
 EXCHANGES = ["binance", "bybit", "okx", "kucoin", "gateio", "mexc"]
 
