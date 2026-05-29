@@ -34,25 +34,25 @@ from subscriptions.tiers import TIERS, effective_tier, features
 router = Router()
 
 
-BTN_STATUS = "📊 Статус"
-BTN_PAUSE = "⏸ Пауза"
-BTN_RESUME = "▶️ Запустить"
-BTN_THRESHOLD = "🎯 Порог спреда"
-BTN_DIAG = "🔍 Диагностика"
+BTN_CABINET = "👤 Личный кабинет"
 BTN_ABOUT = "ℹ️ О боте"
 BTN_TARIFFS = "💎 Тарифы"
 BTN_REFERRAL = "🔗 Реферальная система"
 BTN_SUPPORT = "💼 Техническая поддержка"
+BTN_DIAG = "🔍 Диагностика"
+
+BTN_STATUS = "📊 Статус"
+BTN_THRESHOLD = "🎯 Порог спреда"
+BTN_PAUSE = "⏸ Пауза"
+BTN_RESUME = "▶️ Запустить"
+BTN_BACK = "🔙 В главное меню"
 
 
-def _user_keyboard(is_admin: bool) -> ReplyKeyboardMarkup:
+def _main_keyboard(is_admin: bool) -> ReplyKeyboardMarkup:
     rows = [
-        [KeyboardButton(text=BTN_STATUS)],
-        [KeyboardButton(text=BTN_THRESHOLD)],
-        [KeyboardButton(text=BTN_PAUSE)],
-        [KeyboardButton(text=BTN_RESUME)],
-        [KeyboardButton(text=BTN_ABOUT)],
+        [KeyboardButton(text=BTN_CABINET)],
         [KeyboardButton(text=BTN_TARIFFS)],
+        [KeyboardButton(text=BTN_ABOUT)],
         [KeyboardButton(text=BTN_REFERRAL)],
         [KeyboardButton(text=BTN_SUPPORT)],
     ]
@@ -61,12 +61,25 @@ def _user_keyboard(is_admin: bool) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
+def _cabinet_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_STATUS)],
+            [KeyboardButton(text=BTN_THRESHOLD)],
+            [KeyboardButton(text=BTN_PAUSE)],
+            [KeyboardButton(text=BTN_RESUME)],
+            [KeyboardButton(text=BTN_BACK)],
+        ],
+        resize_keyboard=True,
+    )
+
+
 def _is_admin(message: Message) -> bool:
     return message.from_user is not None and message.from_user.id == ADMIN_TELEGRAM_ID
 
 
 async def _kb(message: Message) -> ReplyKeyboardMarkup:
-    return _user_keyboard(_is_admin(message))
+    return _main_keyboard(_is_admin(message))
 
 
 def _format_expiry(dt) -> str:
@@ -103,7 +116,41 @@ async def cmd_start(message: Message) -> None:
         f"(Binance, Bybit, OKX, KuCoin, Gate.io, MEXC).\n\n"
         f"{body}\n\n"
         f"Используй кнопки внизу 👇",
-        reply_markup=_user_keyboard(is_admin),
+        reply_markup=_main_keyboard(is_admin),
+    )
+
+
+@router.message(F.text == BTN_CABINET)
+async def btn_cabinet(message: Message) -> None:
+    user = await get_or_create_user(
+        message.from_user.id, message.from_user.username
+    )
+    tier_eff = effective_tier(user.tier, user.subscription_expires_at)
+    feats = features(tier_eff)
+    has_sub = tier_eff in ("basic", "pro", "vip", "admin")
+    paused_str = "на паузе ⏸" if user.paused else "активен ✅"
+    if has_sub:
+        sub_line = (
+            f"Тариф: <b>{feats.name}</b> до "
+            f"{_format_expiry(user.subscription_expires_at)}"
+        )
+    else:
+        sub_line = "Подписка: <b>нет активной</b>"
+    await message.answer(
+        f"👤 <b>Личный кабинет</b>\n\n"
+        f"{sub_line}\n"
+        f"Состояние: {paused_str}\n"
+        f"Порог: {user.threshold}%\n\n"
+        f"Используй кнопки ниже 👇",
+        reply_markup=_cabinet_keyboard(),
+    )
+
+
+@router.message(F.text == BTN_BACK)
+async def btn_back(message: Message) -> None:
+    await message.answer(
+        "🏠 Главное меню",
+        reply_markup=_main_keyboard(_is_admin(message)),
     )
 
 
@@ -142,7 +189,7 @@ async def cmd_status(message: Message) -> None:
     if _is_admin(message):
         total = await count_users()
         text += f"\n\n👥 Всего пользователей: {total}"
-    await message.answer(text, reply_markup=await _kb(message))
+    await message.answer(text, reply_markup=_cabinet_keyboard())
 
 
 @router.message(Command("setthreshold"))
@@ -170,7 +217,7 @@ async def cmd_setthreshold(message: Message) -> None:
         )
     await message.answer(
         f"✅ Твой порог установлен: <b>{new_threshold}%</b>{note}",
-        reply_markup=await _kb(message),
+        reply_markup=_cabinet_keyboard(),
     )
 
 
@@ -185,7 +232,7 @@ async def btn_threshold(message: Message) -> None:
         f"Минимум для твоего тарифа: <b>{feats.min_threshold}%</b>\n\n"
         f"Чтобы изменить — отправь команду:\n"
         f"<code>/setthreshold 1.5</code>",
-        reply_markup=await _kb(message),
+        reply_markup=_cabinet_keyboard(),
     )
 
 
@@ -196,7 +243,7 @@ async def cmd_pause(message: Message) -> None:
     await set_paused(message.from_user.id, True)
     await message.answer(
         "⏸ Рассылка тебе приостановлена.",
-        reply_markup=await _kb(message),
+        reply_markup=_cabinet_keyboard(),
     )
 
 
@@ -207,7 +254,7 @@ async def cmd_resume(message: Message) -> None:
     await set_paused(message.from_user.id, False)
     await message.answer(
         "✅ Рассылка возобновлена.",
-        reply_markup=await _kb(message),
+        reply_markup=_cabinet_keyboard(),
     )
 
 
@@ -222,7 +269,7 @@ async def btn_about(message: Message) -> None:
         "2. Депозит включён на бирже продажи\n"
         "3. Есть общая работающая сеть\n"
         "4. Реальный спред по стакану + после комиссий ≥ порог",
-        reply_markup=await _kb(message),
+        reply_markup=_main_keyboard(_is_admin(message)),
     )
 
 
@@ -275,7 +322,7 @@ async def btn_tariffs(message: Message) -> None:
         lines.append("⏳ Оплата через CryptoBot скоро будет доступна.")
     await message.answer(
         "\n".join(lines),
-        reply_markup=await _kb(message),
+        reply_markup=_main_keyboard(_is_admin(message)),
     )
     if inline_kb is not None:
         await message.answer(
@@ -335,7 +382,7 @@ async def btn_referral(message: Message) -> None:
         "Скоро ты сможешь приглашать друзей и получать "
         "<b>20% от их подписок</b> на свой баланс.\n\n"
         "⏳ Раздел в разработке.",
-        reply_markup=await _kb(message),
+        reply_markup=_main_keyboard(_is_admin(message)),
     )
 
 
@@ -344,7 +391,7 @@ async def btn_support(message: Message) -> None:
     await message.answer(
         "<b>💼 Техническая поддержка</b>\n\n"
         "По любым вопросам пиши: @harisov102",
-        reply_markup=await _kb(message),
+        reply_markup=_main_keyboard(_is_admin(message)),
     )
 
 
@@ -470,5 +517,5 @@ async def fallback(message: Message) -> None:
     await get_or_create_user(message.from_user.id, message.from_user.username)
     await message.answer(
         "Используй кнопки меню ниже 👇",
-        reply_markup=await _kb(message),
+        reply_markup=_main_keyboard(_is_admin(message)),
     )
