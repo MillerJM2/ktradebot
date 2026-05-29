@@ -41,7 +41,12 @@ async def _fetch_one(exchange_name: str) -> tuple[str, dict]:
             bid = ticker.get("bid")
             ask = ticker.get("ask")
             if bid and ask and bid > 0 and ask > 0:
-                result[symbol] = {"bid": float(bid), "ask": float(ask)}
+                quote_vol = ticker.get("quoteVolume") or 0
+                result[symbol] = {
+                    "bid": float(bid),
+                    "ask": float(ask),
+                    "quote_volume": float(quote_vol),
+                }
         logger.info(f"[{exchange_name}] получено {len(result)} тикеров")
     except Exception as e:
         logger.warning(f"[{exchange_name}] ошибка: {e}")

@@ -40,6 +40,7 @@ async def arbitrage_loop(bot: Bot) -> None:
                     await bot.send_message(
                         chat_id=ADMIN_TELEGRAM_ID,
                         text=spread.format_message(),
+                        disable_web_page_preview=True,
                     )
                 except Exception as e:
                     logger.warning(f"Не удалось отправить сообщение: {e}")
