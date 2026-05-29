@@ -310,12 +310,9 @@ async def btn_tariffs(message: Message) -> None:
     for key in ("basic", "pro", "vip"):
         t = TIERS[key]
         prefix = "👉 " if key == tier_eff else "    "
-        price = f"${t.price_usd:g}/мес"
-        lines.append(
-            f"{prefix}<b>{t.name}</b> — {price}\n"
-            f"     {len(t.allowed_exchanges)} бирж, порог от {t.min_threshold}%, "
-            f"до {t.max_signals_per_cycle} сигналов за цикл"
-        )
+        lines.append(f"{prefix}<b>{t.name}</b> — ${t.price_usd:g}/мес")
+    lines.append("")
+    lines.append("ℹ️ Подробнее о тарифах — в нашем канале (скоро).")
     inline_kb = _tariff_inline_keyboard()
     if inline_kb is None:
         lines.append("")
