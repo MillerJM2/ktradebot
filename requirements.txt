@@ -1,0 +1,4 @@
+aiogram==3.13.1
+ccxt==4.4.50
+python-dotenv==1.0.1
+loguru==0.7.2
