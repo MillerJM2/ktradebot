@@ -17,5 +17,8 @@ class User(Base):
     tier: Mapped[str] = mapped_column(String, default="free")
     threshold: Mapped[float] = mapped_column(Float, default=2.0)
     paused: Mapped[bool] = mapped_column(Boolean, default=False)
+    subscription_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     last_active_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

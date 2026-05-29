@@ -20,6 +20,7 @@ from database.session import init_db
 from database.users_repo import get_active_users
 from exchanges.currencies_cache import cache as currencies_cache
 from exchanges.fetcher import fetch_all_tickers
+from subscriptions.tiers import effective_tier, features
 
 
 logger.remove()
@@ -65,8 +66,16 @@ async def arbitrage_loop(bot: Bot) -> None:
             users = await get_active_users()
             send_tasks = []
             for user in users:
-                personal = [v for v in verified if v.net_profit_percent >= user.threshold]
-                for sig in personal[:5]:
+                tier = effective_tier(user.tier, user.subscription_expires_at)
+                feats = features(tier)
+                user_threshold = max(user.threshold, feats.min_threshold)
+                personal = [
+                    v for v in verified
+                    if v.net_profit_percent >= user_threshold
+                    and v.buy_exchange in feats.allowed_exchanges
+                    and v.sell_exchange in feats.allowed_exchanges
+                ]
+                for sig in personal[:feats.max_signals_per_cycle]:
                     send_tasks.append(
                         _send_signal_safe(bot, user.telegram_id, sig.format_message())
                     )

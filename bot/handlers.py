@@ -1,4 +1,4 @@
-"""Обработчики команд и кнопок Telegram-бота (multi-user через SQLite)."""
+"""Обработчики команд и кнопок Telegram-бота (multi-user + tiers)."""
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
@@ -6,10 +6,15 @@ from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
 from config import ADMIN_TELEGRAM_ID
 from database.users_repo import (
     count_users,
+    find_user_by_username,
     get_or_create_user,
+    grant_subscription,
+    list_users,
+    revoke_subscription,
     set_paused,
     set_threshold,
 )
+from subscriptions.tiers import TIERS, effective_tier, features
 
 
 router = Router()
@@ -20,7 +25,6 @@ BTN_PAUSE = "⏸ Пауза"
 BTN_RESUME = "▶️ Запустить"
 BTN_THRESHOLD = "🎯 Порог спреда"
 BTN_DIAG = "🔍 Диагностика"
-
 BTN_ABOUT = "ℹ️ О боте"
 BTN_TARIFFS = "💎 Тарифы"
 BTN_REFERRAL = "🔗 Реферальная система"
@@ -51,20 +55,28 @@ async def _kb(message: Message) -> ReplyKeyboardMarkup:
     return _user_keyboard(_is_admin(message))
 
 
+def _format_expiry(dt) -> str:
+    if dt is None:
+        return "—"
+    return dt.strftime("%Y-%m-%d %H:%M UTC")
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     user = await get_or_create_user(
-        message.from_user.id,
-        message.from_user.username,
+        message.from_user.id, message.from_user.username
     )
     is_admin = _is_admin(message)
+    tier_eff = effective_tier(user.tier, user.subscription_expires_at)
+    feats = features(tier_eff)
     greeting = "админ" if is_admin else message.from_user.first_name or "друг"
     await message.answer(
         f"👋 Привет, {greeting}!\n\n"
-        f"Это бот для поиска <b>арбитражных вилок</b> между биржами "
-        f"Binance, Bybit, OKX, KuCoin, Gate.io, MEXC.\n\n"
-        f"Сейчас твой <b>порог спреда: {user.threshold}%</b>. "
-        f"Сигналы рассылаются в реалтайме при появлении вилок выше порога.\n\n"
+        f"Бот ищет <b>арбитражные вилки</b> на 6 биржах "
+        f"(Binance, Bybit, OKX, KuCoin, Gate.io, MEXC).\n\n"
+        f"Твой тариф: <b>{feats.name}</b>\n"
+        f"Доступно бирж: {len(feats.allowed_exchanges)}\n"
+        f"Минимальный порог: {feats.min_threshold}%\n\n"
         f"Используй кнопки внизу 👇",
         reply_markup=_user_keyboard(is_admin),
     )
@@ -76,12 +88,20 @@ async def cmd_status(message: Message) -> None:
     user = await get_or_create_user(
         message.from_user.id, message.from_user.username
     )
+    tier_eff = effective_tier(user.tier, user.subscription_expires_at)
+    feats = features(tier_eff)
     paused_str = "на паузе ⏸" if user.paused else "активен ✅"
+    effective_threshold = max(user.threshold, feats.min_threshold)
+
     text = (
         f"<b>Твой статус</b>\n\n"
         f"Состояние: {paused_str}\n"
-        f"Порог спреда: <b>{user.threshold}%</b>\n"
-        f"Тариф: <b>{user.tier}</b>"
+        f"Тариф: <b>{feats.name}</b>\n"
+        f"Подписка до: {_format_expiry(user.subscription_expires_at)}\n"
+        f"\n"
+        f"Твой порог: {user.threshold}%\n"
+        f"Фактический порог (с учётом тарифа): <b>{effective_threshold}%</b>\n"
+        f"Доступные биржи: {', '.join(feats.allowed_exchanges)}"
     )
     if _is_admin(message):
         total = await count_users()
@@ -103,10 +123,17 @@ async def cmd_setthreshold(message: Message) -> None:
     if new_threshold <= 0 or new_threshold > 100:
         await message.answer("❌ Порог должен быть от 0 до 100")
         return
-    await get_or_create_user(message.from_user.id, message.from_user.username)
+    user = await get_or_create_user(message.from_user.id, message.from_user.username)
+    feats = features(effective_tier(user.tier, user.subscription_expires_at))
     await set_threshold(message.from_user.id, new_threshold)
+    note = ""
+    if new_threshold < feats.min_threshold:
+        note = (
+            f"\n\n⚠️ На твоём тарифе минимальный порог — <b>{feats.min_threshold}%</b>. "
+            f"Сигналы будут приходить только от этого значения."
+        )
     await message.answer(
-        f"✅ Твой порог установлен: <b>{new_threshold}%</b>",
+        f"✅ Твой порог установлен: <b>{new_threshold}%</b>{note}",
         reply_markup=await _kb(message),
     )
 
@@ -116,8 +143,10 @@ async def btn_threshold(message: Message) -> None:
     user = await get_or_create_user(
         message.from_user.id, message.from_user.username
     )
+    feats = features(effective_tier(user.tier, user.subscription_expires_at))
     await message.answer(
-        f"Твой текущий порог: <b>{user.threshold}%</b>\n\n"
+        f"Твой текущий порог: <b>{user.threshold}%</b>\n"
+        f"Минимум для твоего тарифа: <b>{feats.min_threshold}%</b>\n\n"
         f"Чтобы изменить — отправь команду:\n"
         f"<code>/setthreshold 1.5</code>",
         reply_markup=await _kb(message),
@@ -130,7 +159,7 @@ async def cmd_pause(message: Message) -> None:
     await get_or_create_user(message.from_user.id, message.from_user.username)
     await set_paused(message.from_user.id, True)
     await message.answer(
-        "⏸ Рассылка тебе приостановлена. Нажми «▶️ Запустить» для возобновления.",
+        "⏸ Рассылка тебе приостановлена.",
         reply_markup=await _kb(message),
     )
 
@@ -150,29 +179,39 @@ async def cmd_resume(message: Message) -> None:
 async def btn_about(message: Message) -> None:
     await message.answer(
         "<b>О боте</b>\n\n"
-        "Бот отслеживает цены криптовалют на 6 крупнейших биржах "
-        "(Binance, Bybit, OKX, KuCoin, Gate.io, MEXC) и присылает "
-        "уведомления о выгодных межбиржевых вилках.\n\n"
-        "Возможности:\n"
-        "• Реалтайм сигналы 24/7\n"
-        "• Индивидуальный порог спреда\n"
-        "• Учёт торговых комиссий\n"
-        "• Прямые ссылки на торговые страницы",
+        "Бот отслеживает цены криптовалют на 6 крупнейших биржах и присылает "
+        "уведомления о <b>проверенных</b> межбиржевых вилках.\n\n"
+        "Каждый сигнал проходит 4 фильтра:\n"
+        "1. Вывод включён на бирже покупки\n"
+        "2. Депозит включён на бирже продажи\n"
+        "3. Есть общая работающая сеть\n"
+        "4. Реальный спред по стакану + после комиссий ≥ порог",
         reply_markup=await _kb(message),
     )
 
 
 @router.message(F.text == BTN_TARIFFS)
 async def btn_tariffs(message: Message) -> None:
-    await message.answer(
-        "<b>💎 Тарифы</b>\n\n"
-        "🆓 <b>Free</b> — 2 биржи, спред от 5%, задержка 5 мин\n"
-        "🥉 <b>Basic</b> — 4 биржи, спред от 2%, реалтайм — <b>$15/мес</b>\n"
-        "🥈 <b>Pro</b> — все 6 бирж, спред от 0.5% — <b>$40/мес</b>\n"
-        "🥇 <b>VIP</b> — Pro + автоторговля — <b>$100/мес</b>\n\n"
-        "⏳ Подписка пока недоступна — готовим запуск.",
-        reply_markup=await _kb(message),
+    user = await get_or_create_user(
+        message.from_user.id, message.from_user.username
     )
+    tier_eff = effective_tier(user.tier, user.subscription_expires_at)
+    lines = [f"<b>💎 Тарифы</b>\n\nТвой текущий: <b>{features(tier_eff).name}</b>"]
+    if user.subscription_expires_at:
+        lines.append(f"Действует до: {_format_expiry(user.subscription_expires_at)}")
+    lines.append("")
+    for key in ("free", "basic", "pro", "vip"):
+        t = TIERS[key]
+        prefix = "👉 " if key == tier_eff else "    "
+        price = "бесплатно" if t.price_usd == 0 else f"${t.price_usd:g}/мес"
+        lines.append(
+            f"{prefix}<b>{t.name}</b> — {price}\n"
+            f"     {len(t.allowed_exchanges)} бирж, порог от {t.min_threshold}%, "
+            f"до {t.max_signals_per_cycle} сигналов за цикл"
+        )
+    lines.append("")
+    lines.append("⏳ Оплата через CryptoBot скоро будет доступна.")
+    await message.answer("\n".join(lines), reply_markup=await _kb(message))
 
 
 @router.message(F.text == BTN_REFERRAL)
@@ -195,12 +234,91 @@ async def btn_support(message: Message) -> None:
     )
 
 
+@router.message(Command("grant"))
+async def cmd_grant(message: Message) -> None:
+    if not _is_admin(message):
+        return
+    parts = (message.text or "").split()
+    if len(parts) != 4:
+        await message.answer(
+            "Использование: <code>/grant &lt;user_id|@username&gt; &lt;tier&gt; &lt;days&gt;</code>\n"
+            "Тарифы: free, basic, pro, vip\n"
+            "Пример: <code>/grant @ivanov pro 30</code>"
+        )
+        return
+    target, tier, days_str = parts[1], parts[2], parts[3]
+    if tier not in ("free", "basic", "pro", "vip"):
+        await message.answer("❌ Тариф должен быть: free, basic, pro, vip")
+        return
+    try:
+        days = int(days_str)
+    except ValueError:
+        await message.answer("❌ Дней — целое число")
+        return
+
+    if target.startswith("@") or not target.lstrip("-").isdigit():
+        u = await find_user_by_username(target)
+    else:
+        u = await get_or_create_user(int(target))
+    if u is None:
+        await message.answer("❌ Пользователь не найден. Он должен был хотя бы раз нажать /start.")
+        return
+
+    updated = await grant_subscription(u.telegram_id, tier, days)
+    await message.answer(
+        f"✅ {updated.username or updated.telegram_id} → "
+        f"<b>{features(tier).name}</b> до {_format_expiry(updated.subscription_expires_at)}"
+    )
+
+
+@router.message(Command("revoke"))
+async def cmd_revoke(message: Message) -> None:
+    if not _is_admin(message):
+        return
+    parts = (message.text or "").split()
+    if len(parts) != 2:
+        await message.answer("Использование: <code>/revoke &lt;user_id|@username&gt;</code>")
+        return
+    target = parts[1]
+    if target.startswith("@") or not target.lstrip("-").isdigit():
+        u = await find_user_by_username(target)
+    else:
+        u = await get_or_create_user(int(target))
+    if u is None:
+        await message.answer("❌ Пользователь не найден.")
+        return
+    await revoke_subscription(u.telegram_id)
+    await message.answer(f"✅ Подписка отозвана у {u.username or u.telegram_id}.")
+
+
+@router.message(Command("users"))
+async def cmd_users(message: Message) -> None:
+    if not _is_admin(message):
+        return
+    users = await list_users()
+    if not users:
+        await message.answer("Пользователей пока нет.")
+        return
+    lines = [f"<b>Всего: {len(users)}</b>", ""]
+    for u in users[:50]:
+        tier_eff = effective_tier(u.tier, u.subscription_expires_at)
+        line = f"• {u.username or u.telegram_id} — {features(tier_eff).name}"
+        if u.subscription_expires_at:
+            line += f" (до {u.subscription_expires_at:%Y-%m-%d})"
+        if u.paused:
+            line += " ⏸"
+        lines.append(line)
+    if len(users) > 50:
+        lines.append(f"\n... и ещё {len(users) - 50}")
+    await message.answer("\n".join(lines))
+
+
 @router.message(Command("diag"))
 @router.message(F.text == BTN_DIAG)
 async def cmd_diag(message: Message) -> None:
     if not _is_admin(message):
         await message.answer(
-            "⛔ Эта команда доступна только администратору.",
+            "⛔ Команда доступна только администратору.",
             reply_markup=await _kb(message),
         )
         return
@@ -211,27 +329,25 @@ async def cmd_diag(message: Message) -> None:
     await message.answer("🔍 Запускаю один цикл опроса бирж...")
     tickers = await fetch_all_tickers()
     counts = {ex: len(t) for ex, t in tickers.items()}
-    spreads_at_threshold = find_spreads(tickers, user.threshold)
+    spreads_at = find_spreads(tickers, user.threshold)
     spreads_top = find_spreads(tickers, 0.0)
 
     lines = ["<b>Тикеры по биржам:</b>"]
     for ex, n in counts.items():
         emoji = "✅" if n > 0 else "❌"
         lines.append(f"{emoji} {ex}: {n}")
-
     lines.append("")
-    lines.append(f"Вилок ≥ {user.threshold}%: <b>{len(spreads_at_threshold)}</b>")
+    lines.append(f"Сырых вилок ≥ {user.threshold}%: <b>{len(spreads_at)}</b>")
     lines.append(f"Всего пар с положительным спредом: <b>{len(spreads_top)}</b>")
 
     if spreads_top:
         lines.append("")
-        lines.append("<b>Топ-5 максимальных спредов:</b>")
+        lines.append("<b>Топ-5 сырых спредов:</b>")
         for sp in spreads_top[:5]:
             lines.append(
                 f"• {sp.symbol}: {sp.spread_percent:.2f}% "
                 f"({sp.buy_exchange} → {sp.sell_exchange})"
             )
-
     await message.answer("\n".join(lines), reply_markup=await _kb(message))
 
 
