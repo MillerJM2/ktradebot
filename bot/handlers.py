@@ -390,7 +390,7 @@ async def btn_referral(message: Message) -> None:
 async def btn_support(message: Message) -> None:
     await message.answer(
         "<b>💼 Техническая поддержка</b>\n\n"
-        "По любым вопросам пиши: @harisov102",
+        "⏳ Скоро здесь появится контакт поддержки.",
         reply_markup=_main_keyboard(_is_admin(message)),
     )
 
