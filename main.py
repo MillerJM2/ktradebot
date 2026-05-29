@@ -12,38 +12,50 @@ from config import (
     POLL_INTERVAL_SECONDS,
     TELEGRAM_BOT_TOKEN,
 )
-from exchanges.fetcher import fetch_all_tickers
 from arbitrage.finder import find_spreads
-from bot.handlers import router, state
+from bot.handlers import router
+from database.session import init_db
+from database.users_repo import get_active_users
+from exchanges.fetcher import fetch_all_tickers
 
 
 logger.remove()
 logger.add(sys.stderr, level="INFO")
 
 
+async def _send_signal_safe(bot: Bot, user_id: int, text: str) -> None:
+    try:
+        await bot.send_message(
+            chat_id=user_id,
+            text=text,
+            disable_web_page_preview=True,
+        )
+    except Exception as e:
+        logger.warning(f"Не отправилось user_id={user_id}: {e}")
+
+
 async def arbitrage_loop(bot: Bot) -> None:
-    """Фоновая задача: каждые N секунд опрашивает биржи и шлёт сигналы админу."""
+    """Каждые N секунд опрашивает биржи и рассылает вилки активным юзерам."""
     logger.info("Фоновый цикл арбитража запущен")
     while True:
         try:
-            if state.paused:
-                await asyncio.sleep(POLL_INTERVAL_SECONDS)
-                continue
-
             tickers = await fetch_all_tickers()
-            spreads = find_spreads(tickers, state.threshold)
+            all_spreads = find_spreads(tickers, 0.0)
+            users = await get_active_users()
+            logger.info(
+                f"Активных юзеров: {len(users)}, всего вилок: {len(all_spreads)}"
+            )
 
-            logger.info(f"Найдено вилок: {len(spreads)} (порог {state.threshold}%)")
-
-            for spread in spreads[:10]:
-                try:
-                    await bot.send_message(
-                        chat_id=ADMIN_TELEGRAM_ID,
-                        text=spread.format_message(),
-                        disable_web_page_preview=True,
+            send_tasks = []
+            for user in users:
+                personal = [s for s in all_spreads if s.spread_percent >= user.threshold]
+                for spread in personal[:10]:
+                    send_tasks.append(
+                        _send_signal_safe(bot, user.telegram_id, spread.format_message())
                     )
-                except Exception as e:
-                    logger.warning(f"Не удалось отправить сообщение: {e}")
+
+            if send_tasks:
+                await asyncio.gather(*send_tasks, return_exceptions=True)
         except Exception as e:
             logger.exception(f"Ошибка в цикле арбитража: {e}")
 
@@ -57,6 +69,9 @@ async def main() -> None:
     if not ADMIN_TELEGRAM_ID:
         logger.error("ADMIN_TELEGRAM_ID не задан в .env")
         sys.exit(1)
+
+    logger.info("Инициализация БД...")
+    await init_db()
 
     bot = Bot(
         token=TELEGRAM_BOT_TOKEN,
