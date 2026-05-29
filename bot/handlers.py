@@ -84,13 +84,24 @@ async def cmd_start(message: Message) -> None:
     tier_eff = effective_tier(user.tier, user.subscription_expires_at)
     feats = features(tier_eff)
     greeting = "админ" if is_admin else message.from_user.first_name or "друг"
+    has_sub = tier_eff in ("basic", "pro", "vip", "admin")
+    if has_sub:
+        body = (
+            f"Твой тариф: <b>{feats.name}</b>\n"
+            f"Доступно бирж: {len(feats.allowed_exchanges)}\n"
+            f"Минимальный порог: {feats.min_threshold}%"
+        )
+    else:
+        body = (
+            "У тебя пока <b>нет активной подписки</b>.\n"
+            "Чтобы начать получать сигналы — выбери тариф в разделе "
+            "<b>💎 Тарифы</b>."
+        )
     await message.answer(
         f"👋 Привет, {greeting}!\n\n"
         f"Бот ищет <b>арбитражные вилки</b> на 6 биржах "
         f"(Binance, Bybit, OKX, KuCoin, Gate.io, MEXC).\n\n"
-        f"Твой тариф: <b>{feats.name}</b>\n"
-        f"Доступно бирж: {len(feats.allowed_exchanges)}\n"
-        f"Минимальный порог: {feats.min_threshold}%\n\n"
+        f"{body}\n\n"
         f"Используй кнопки внизу 👇",
         reply_markup=_user_keyboard(is_admin),
     )
@@ -104,19 +115,30 @@ async def cmd_status(message: Message) -> None:
     )
     tier_eff = effective_tier(user.tier, user.subscription_expires_at)
     feats = features(tier_eff)
+    has_sub = tier_eff in ("basic", "pro", "vip", "admin")
     paused_str = "на паузе ⏸" if user.paused else "активен ✅"
-    effective_threshold = max(user.threshold, feats.min_threshold)
 
-    text = (
-        f"<b>Твой статус</b>\n\n"
-        f"Состояние: {paused_str}\n"
-        f"Тариф: <b>{feats.name}</b>\n"
-        f"Подписка до: {_format_expiry(user.subscription_expires_at)}\n"
-        f"\n"
-        f"Твой порог: {user.threshold}%\n"
-        f"Фактический порог (с учётом тарифа): <b>{effective_threshold}%</b>\n"
-        f"Доступные биржи: {', '.join(feats.allowed_exchanges)}"
-    )
+    if has_sub:
+        effective_threshold = max(user.threshold, feats.min_threshold)
+        exchanges_line = ", ".join(feats.allowed_exchanges)
+        text = (
+            f"<b>Твой статус</b>\n\n"
+            f"Состояние: {paused_str}\n"
+            f"Тариф: <b>{feats.name}</b>\n"
+            f"Подписка до: {_format_expiry(user.subscription_expires_at)}\n"
+            f"\n"
+            f"Твой порог: {user.threshold}%\n"
+            f"Фактический порог (с учётом тарифа): <b>{effective_threshold}%</b>\n"
+            f"Доступные биржи: {exchanges_line}"
+        )
+    else:
+        text = (
+            f"<b>Твой статус</b>\n\n"
+            f"Подписка: <b>нет активной</b>\n"
+            f"Состояние: {paused_str}\n\n"
+            f"Чтобы начать получать сигналы — выбери тариф в разделе "
+            f"<b>💎 Тарифы</b>."
+        )
     if _is_admin(message):
         total = await count_users()
         text += f"\n\n👥 Всего пользователей: {total}"
@@ -229,14 +251,19 @@ async def btn_tariffs(message: Message) -> None:
         message.from_user.id, message.from_user.username
     )
     tier_eff = effective_tier(user.tier, user.subscription_expires_at)
-    lines = [f"<b>💎 Тарифы</b>\n\nТвой текущий: <b>{features(tier_eff).name}</b>"]
-    if user.subscription_expires_at:
-        lines.append(f"Действует до: {_format_expiry(user.subscription_expires_at)}")
+    has_sub = tier_eff in ("basic", "pro", "vip", "admin")
+    lines = ["<b>💎 Тарифы</b>", ""]
+    if has_sub:
+        lines.append(f"Твой текущий: <b>{features(tier_eff).name}</b>")
+        if user.subscription_expires_at:
+            lines.append(f"Действует до: {_format_expiry(user.subscription_expires_at)}")
+    else:
+        lines.append("У тебя пока <b>нет активной подписки</b>.")
     lines.append("")
-    for key in ("free", "basic", "pro", "vip"):
+    for key in ("basic", "pro", "vip"):
         t = TIERS[key]
         prefix = "👉 " if key == tier_eff else "    "
-        price = "бесплатно" if t.price_usd == 0 else f"${t.price_usd:g}/мес"
+        price = f"${t.price_usd:g}/мес"
         lines.append(
             f"{prefix}<b>{t.name}</b> — {price}\n"
             f"     {len(t.allowed_exchanges)} бирж, порог от {t.min_threshold}%, "

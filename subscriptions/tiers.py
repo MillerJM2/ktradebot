@@ -21,11 +21,11 @@ class TierFeatures:
 
 TIERS: dict[str, TierFeatures] = {
     "free": TierFeatures(
-        name="Free",
+        name="Без подписки",
         price_usd=0.0,
-        min_threshold=5.0,
-        allowed_exchanges=("binance", "bybit"),
-        max_signals_per_cycle=1,
+        min_threshold=999.0,
+        allowed_exchanges=(),
+        max_signals_per_cycle=0,
     ),
     "basic": TierFeatures(
         name="Basic",
