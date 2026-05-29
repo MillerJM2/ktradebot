@@ -17,7 +17,10 @@ class TierFeatures:
     is_lifetime: bool = False
 
 
-ALL_EXCHANGES = ("binance", "bybit", "okx", "kucoin", "gateio", "mexc")
+ALL_EXCHANGES = (
+    "binance", "bybit", "okx", "kucoin", "gateio", "mexc",
+    "bitget", "bingx", "htx", "bitfinex",
+)
 
 
 TIERS: dict[str, TierFeatures] = {
@@ -44,7 +47,7 @@ TIERS: dict[str, TierFeatures] = {
         bullets=(
             "Доступ на 3 месяца",
             "Торговые пары к USDT",
-            "6 CEX бирж",
+            "10 CEX бирж",
         ),
     ),
     "standart": TierFeatures(
@@ -60,7 +63,7 @@ TIERS: dict[str, TierFeatures] = {
             "Доступ на 6 месяцев",
             "Торговые пары к USDT",
             "Торговые пары к BTC",
-            "6 CEX бирж",
+            "10 CEX бирж",
         ),
     ),
     "pro": TierFeatures(
@@ -76,7 +79,7 @@ TIERS: dict[str, TierFeatures] = {
             "Доступ на 12 месяцев",
             "Торговые пары к USDT",
             "Торговые пары к BTC",
-            "6 CEX бирж",
+            "10 CEX бирж",
             "3 онлайн-консультации с менеджером",
         ),
     ),
