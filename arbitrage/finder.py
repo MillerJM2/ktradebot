@@ -17,49 +17,62 @@ class Spread:
     spread_percent: float
 
     @property
+    def total_fees_percent(self) -> float:
+        return taker_fee(self.buy_exchange) + taker_fee(self.sell_exchange)
+
+    @property
     def net_spread_percent(self) -> float:
-        fees = taker_fee(self.buy_exchange) + taker_fee(self.sell_exchange)
-        return self.spread_percent - fees
+        return self.spread_percent - self.total_fees_percent
 
     def _profit_for(self, amount_usd: float) -> float:
         return amount_usd * self.net_spread_percent / 100
 
-    def _format_volume(self, vol_usd: float) -> str:
+    @staticmethod
+    def _format_volume(vol_usd: float) -> str:
         if vol_usd >= 1_000_000:
-            return f"${vol_usd / 1_000_000:.1f}M"
+            return f"{vol_usd / 1_000_000:,.2f}M USDT"
         if vol_usd >= 1_000:
-            return f"${vol_usd / 1_000:.0f}K"
-        return f"${vol_usd:.0f}"
+            return f"{vol_usd / 1_000:,.0f}K USDT"
+        return f"{vol_usd:,.0f} USDT"
+
+    @staticmethod
+    def _format_price(price: float) -> str:
+        if price >= 1:
+            return f"{price:,.4f}$"
+        return f"{price:.8f}$"
 
     def format_message(self) -> str:
         buy_url = trade_url(self.buy_exchange, self.symbol)
         sell_url = trade_url(self.sell_exchange, self.symbol)
         buy_name = display_name(self.buy_exchange)
         sell_name = display_name(self.sell_exchange)
-        ts = datetime.now(timezone.utc).strftime("%H:%M:%S UTC")
+        ts = datetime.now(timezone.utc).strftime("%H:%M UTC")
 
-        net_profit_100 = self._profit_for(100)
-        net_profit_1000 = self._profit_for(1000)
+        profit_1000 = self._profit_for(1000)
 
         return (
-            f"💰 <b>{self.symbol}</b>  ·  спред {self.spread_percent:.2f}%\n"
+            f"<a href=\"{buy_url}\">{buy_name}</a> → "
+            f"<a href=\"{sell_url}\">{sell_name}</a> | "
+            f"<b>{self.symbol}</b>\n"
             f"\n"
-            f"🟢 Купить: <a href=\"{buy_url}\">{buy_name}</a>\n"
-            f"   Цена: <code>{self.buy_price:.8f}</code>\n"
-            f"   Объём 24ч: {self._format_volume(self.buy_volume_usd)}\n"
-            f"   Комиссия: {taker_fee(self.buy_exchange):.2f}%\n"
+            f"📂 <b>Покупка</b>\n"
             f"\n"
-            f"🔴 Продать: <a href=\"{sell_url}\">{sell_name}</a>\n"
-            f"   Цена: <code>{self.sell_price:.8f}</code>\n"
-            f"   Объём 24ч: {self._format_volume(self.sell_volume_usd)}\n"
-            f"   Комиссия: {taker_fee(self.sell_exchange):.2f}%\n"
+            f"Объём 24ч: {self._format_volume(self.buy_volume_usd)}\n"
+            f"Цена: {self._format_price(self.buy_price)}\n"
             f"\n"
-            f"📊 Чистый спред: <b>{self.net_spread_percent:.2f}%</b>\n"
-            f"   Прибыль с $100: <b>${net_profit_100:.2f}</b>\n"
-            f"   Прибыль с $1000: <b>${net_profit_1000:.2f}</b>\n"
+            f"📈 <b>Продажа</b>\n"
             f"\n"
-            f"⏰ {ts}\n"
-            f"⚠️ Не учтены сетевые комиссии и время вывода между биржами"
+            f"Объём 24ч: {self._format_volume(self.sell_volume_usd)}\n"
+            f"Цена: {self._format_price(self.sell_price)}\n"
+            f"\n"
+            f"Профит: <b>{profit_1000:.2f} USDT</b> (на $1000)\n"
+            f"Спред: <b>{self.spread_percent:.2f}%</b>\n"
+            f"Чистый спред: <b>{self.net_spread_percent:.2f}%</b>\n"
+            f"\n"
+            f"Комиссии бирж: {self.total_fees_percent:.2f}% "
+            f"({taker_fee(self.buy_exchange):.1f}% + {taker_fee(self.sell_exchange):.1f}%)\n"
+            f"\n"
+            f"⏰ {ts}"
         )
 
 
