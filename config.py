@@ -16,6 +16,9 @@ CRYPTOBOT_BASE_URL = os.getenv(
 INVOICE_POLL_INTERVAL_SECONDS = 30
 PROMO_UNTIL_DATE = "12.03.2026"
 
+REFERRAL_PERCENT = 20
+MIN_WITHDRAW_USD = 5.0
+
 EXCHANGES = [
     "binance", "bybit", "okx", "kucoin", "gateio", "mexc",
     "bitget", "bingx", "htx", "bitfinex",

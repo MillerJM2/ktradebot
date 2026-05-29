@@ -109,6 +109,11 @@ async def main() -> None:
     dp = Dispatcher()
     dp.include_router(router)
 
+    from bot.runtime import runtime
+    me = await bot.get_me()
+    runtime.bot_username = me.username or ""
+    logger.info(f"Бот @{runtime.bot_username} готов")
+
     asyncio.create_task(arbitrage_loop(bot))
     asyncio.create_task(invoice_poller_loop(bot))
 

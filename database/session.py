@@ -33,7 +33,12 @@ async def _add_missing_columns(table: str, columns: dict[str, str]) -> None:
 
 
 async def _migrate_users() -> None:
-    await _add_missing_columns("users", {"subscription_expires_at": "DATETIME"})
+    await _add_missing_columns("users", {
+        "subscription_expires_at": "DATETIME",
+        "referrer_id": "INTEGER",
+        "referral_balance_usd": "FLOAT DEFAULT 0",
+        "total_referral_earned_usd": "FLOAT DEFAULT 0",
+    })
 
 
 async def init_db() -> None:

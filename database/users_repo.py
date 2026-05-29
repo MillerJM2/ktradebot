@@ -73,6 +73,57 @@ async def grant_subscription(
         return user
 
 
+async def set_referrer(telegram_id: int, referrer_id: int) -> None:
+    if referrer_id == telegram_id:
+        return
+    async with async_session_factory() as session:
+        user = await session.get(User, telegram_id)
+        if user is None or user.referrer_id is not None:
+            return
+        user.referrer_id = referrer_id
+        await session.commit()
+
+
+async def add_referral_balance(referrer_id: int, amount_usd: float) -> None:
+    async with async_session_factory() as session:
+        user = await session.get(User, referrer_id)
+        if user is None:
+            return
+        user.referral_balance_usd = (user.referral_balance_usd or 0.0) + amount_usd
+        user.total_referral_earned_usd = (user.total_referral_earned_usd or 0.0) + amount_usd
+        await session.commit()
+
+
+async def withdraw_referral_balance(telegram_id: int) -> float:
+    """Атомарно обнуляет баланс и возвращает старое значение."""
+    async with async_session_factory() as session:
+        user = await session.get(User, telegram_id)
+        if user is None:
+            return 0.0
+        amount = user.referral_balance_usd or 0.0
+        user.referral_balance_usd = 0.0
+        await session.commit()
+        return amount
+
+
+async def restore_referral_balance(telegram_id: int, amount_usd: float) -> None:
+    """Откатываем списание, если CryptoBot transfer не прошёл."""
+    async with async_session_factory() as session:
+        user = await session.get(User, telegram_id)
+        if user is None:
+            return
+        user.referral_balance_usd = (user.referral_balance_usd or 0.0) + amount_usd
+        await session.commit()
+
+
+async def count_referrals(referrer_id: int) -> int:
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(User).where(User.referrer_id == referrer_id)
+        )
+        return len(list(result.scalars().all()))
+
+
 async def revoke_subscription(telegram_id: int) -> None:
     async with async_session_factory() as session:
         await session.execute(

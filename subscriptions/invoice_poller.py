@@ -5,19 +5,30 @@ from datetime import datetime
 from aiogram import Bot
 from loguru import logger
 
-from config import INVOICE_POLL_INTERVAL_SECONDS
+from config import INVOICE_POLL_INTERVAL_SECONDS, REFERRAL_PERCENT
 from database.invoices_repo import (
     get_pending_invoices,
     mark_delivered,
     mark_expired,
     mark_paid,
 )
-from database.users_repo import grant_subscription
+from database.users_repo import (
+    add_referral_balance,
+    get_user,
+    grant_subscription,
+)
 from subscriptions.crypto_bot import get_invoices_by_ids, is_configured
 from subscriptions.tiers import features
 
 
-async def _deliver(bot: Bot, invoice_id: int, user_id: int, tier: str, days: int) -> None:
+async def _deliver(
+    bot: Bot,
+    invoice_id: int,
+    user_id: int,
+    tier: str,
+    days: int,
+    amount_usd: float,
+) -> None:
     user = await grant_subscription(user_id, tier, days)
     await mark_delivered(invoice_id)
     if user is None:
@@ -37,6 +48,22 @@ async def _deliver(bot: Bot, invoice_id: int, user_id: int, tier: str, days: int
         )
     except Exception as e:
         logger.warning(f"Не отправилось пользователю {user_id}: {e}")
+
+    if user.referrer_id:
+        commission = amount_usd * REFERRAL_PERCENT / 100
+        await add_referral_balance(user.referrer_id, commission)
+        try:
+            await bot.send_message(
+                chat_id=user.referrer_id,
+                text=(
+                    f"💸 <b>Реферальное начисление</b>\n\n"
+                    f"Твой реферал оплатил подписку — начислено "
+                    f"<b>{commission:.2f} USDT</b> ({REFERRAL_PERCENT}%).\n\n"
+                    f"Посмотреть баланс: 🔗 Реферальная система."
+                ),
+            )
+        except Exception as e:
+            logger.warning(f"Не отправилось рефереру {user.referrer_id}: {e}")
 
 
 async def invoice_poller_loop(bot: Bot) -> None:
@@ -59,7 +86,10 @@ async def invoice_poller_loop(bot: Bot) -> None:
                     if status == "paid":
                         marked = await mark_paid(inv.invoice_id)
                         if marked is not None:
-                            await _deliver(bot, inv.invoice_id, inv.user_id, inv.tier, inv.days)
+                            await _deliver(
+                                bot, inv.invoice_id, inv.user_id,
+                                inv.tier, inv.days, inv.amount_usd,
+                            )
                     elif status == "expired":
                         await mark_expired(inv.invoice_id)
         except Exception as e:

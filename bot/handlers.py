@@ -11,22 +11,35 @@ from aiogram.types import (
 )
 from loguru import logger
 
-from config import ADMIN_TELEGRAM_ID, PROMO_UNTIL_DATE
+import uuid
+
+from config import (
+    ADMIN_TELEGRAM_ID,
+    MIN_WITHDRAW_USD,
+    PROMO_UNTIL_DATE,
+    REFERRAL_PERCENT,
+)
+from bot.runtime import runtime
 from database.invoices_repo import create_invoice as save_invoice
 from database.users_repo import (
+    count_referrals,
     count_users,
     find_user_by_username,
     get_or_create_user,
     grant_subscription,
     list_users,
+    restore_referral_balance,
     revoke_subscription,
     set_paused,
+    set_referrer,
     set_threshold,
+    withdraw_referral_balance,
 )
 from subscriptions.crypto_bot import (
     CryptoBotError,
     create_invoice,
     is_configured as cryptobot_configured,
+    transfer_usdt,
 )
 from subscriptions.tiers import PAID_TIERS, TIERS, effective_tier, features
 
@@ -96,11 +109,29 @@ def _no_sub_text() -> str:
     )
 
 
+def _parse_referrer_from_start(text: str | None) -> int | None:
+    if not text:
+        return None
+    parts = text.split(maxsplit=1)
+    if len(parts) < 2:
+        return None
+    payload = parts[1].strip()
+    if not payload.startswith("ref_"):
+        return None
+    try:
+        return int(payload[4:])
+    except ValueError:
+        return None
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
+    referrer_id = _parse_referrer_from_start(message.text)
     user = await get_or_create_user(
         message.from_user.id, message.from_user.username
     )
+    if referrer_id is not None and user.referrer_id is None:
+        await set_referrer(message.from_user.id, referrer_id)
     is_admin = _is_admin(message)
     tier_eff = effective_tier(user.tier, user.subscription_expires_at)
     feats = features(tier_eff)
@@ -366,12 +397,87 @@ async def cb_buy(callback: CallbackQuery) -> None:
 
 @router.message(F.text == BTN_REFERRAL)
 async def btn_referral(message: Message) -> None:
+    user = await get_or_create_user(
+        message.from_user.id, message.from_user.username
+    )
+    invited = await count_referrals(message.from_user.id)
+    bot_un = runtime.bot_username or "your_bot"
+    ref_link = f"https://t.me/{bot_un}?start=ref_{message.from_user.id}"
+    balance = user.referral_balance_usd or 0.0
+    total_earned = user.total_referral_earned_usd or 0.0
+
+    withdraw_kb = None
+    if balance >= MIN_WITHDRAW_USD and cryptobot_configured():
+        withdraw_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"💸 Вывести {balance:.2f} USDT",
+                callback_data="ref_withdraw",
+            )],
+        ])
+    withdraw_note = (
+        f"Минимум для вывода: <b>{MIN_WITHDRAW_USD:g} USDT</b>"
+        if balance < MIN_WITHDRAW_USD else
+        "Вывод происходит мгновенно через @CryptoBot"
+    )
+
     await message.answer(
-        "<b>🔗 Реферальная система</b>\n\n"
-        "Скоро ты сможешь приглашать друзей и получать "
-        "<b>20% от их подписок</b> на свой баланс.\n\n"
-        "⏳ Раздел в разработке.",
+        f"🔗 <b>Реферальная система</b>\n\n"
+        f"Приглашай друзей и получай <b>{REFERRAL_PERCENT}% от их подписок</b> "
+        f"на свой баланс.\n\n"
+        f"Твоя ссылка:\n"
+        f"<code>{ref_link}</code>\n\n"
+        f"📊 Приглашено: <b>{invited}</b>\n"
+        f"💰 Всего заработано: <b>{total_earned:.2f} USDT</b>\n"
+        f"🏦 Текущий баланс: <b>{balance:.2f} USDT</b>\n\n"
+        f"{withdraw_note}",
         reply_markup=_main_keyboard(_is_admin(message)),
+    )
+    if withdraw_kb is not None:
+        await message.answer("Вывод средств:", reply_markup=withdraw_kb)
+
+
+@router.callback_query(F.data == "ref_withdraw")
+async def cb_withdraw(callback: CallbackQuery) -> None:
+    await callback.answer()
+    user = await get_or_create_user(
+        callback.from_user.id, callback.from_user.username
+    )
+    if not cryptobot_configured():
+        await callback.message.answer("⏳ Оплата временно недоступна.")
+        return
+    if (user.referral_balance_usd or 0.0) < MIN_WITHDRAW_USD:
+        await callback.message.answer(
+            f"❌ Минимальная сумма вывода — {MIN_WITHDRAW_USD:g} USDT."
+        )
+        return
+
+    amount = await withdraw_referral_balance(user.telegram_id)
+    if amount < MIN_WITHDRAW_USD:
+        await restore_referral_balance(user.telegram_id, amount)
+        await callback.message.answer("❌ Недостаточно средств для вывода.")
+        return
+
+    spend_id = f"ref-{user.telegram_id}-{uuid.uuid4().hex[:16]}"
+    try:
+        await transfer_usdt(
+            user_id=user.telegram_id,
+            amount_usd=amount,
+            spend_id=spend_id,
+            comment=f"KTradeClub referral payout {amount:.2f} USDT",
+        )
+    except CryptoBotError as e:
+        await restore_referral_balance(user.telegram_id, amount)
+        logger.warning(f"Transfer failed: {e}")
+        await callback.message.answer(
+            "❌ Не удалось отправить перевод.\n\n"
+            "Возможные причины:\n"
+            "• Ты ни разу не открывал @CryptoBot (открой и нажми /start)\n"
+            "• Временная проблема CryptoBot\n\n"
+            "Баланс возвращён. Попробуй ещё раз."
+        )
+        return
+    await callback.message.answer(
+        f"✅ <b>{amount:.2f} USDT</b> отправлены тебе в @CryptoBot."
     )
 
 

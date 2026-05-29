@@ -22,6 +22,9 @@ class User(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     last_active_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    referrer_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    referral_balance_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    total_referral_earned_usd: Mapped[float] = mapped_column(Float, default=0.0)
 
 
 class Invoice(Base):

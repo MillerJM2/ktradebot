@@ -65,3 +65,18 @@ async def get_invoices_by_ids(invoice_ids: list[int]) -> list[dict]:
     ids_str = ",".join(str(i) for i in invoice_ids)
     result = await _call("getInvoices", {"invoice_ids": ids_str, "count": len(invoice_ids)})
     return result.get("items", [])
+
+
+async def transfer_usdt(user_id: int, amount_usd: float, spend_id: str, comment: str = "") -> dict:
+    """Перевод USDT юзеру в @CryptoBot. user_id — Telegram ID получателя.
+
+    Внимание: получатель должен был хотя бы раз открыть @CryptoBot, иначе ошибка.
+    """
+    return await _call("transfer", {
+        "user_id": user_id,
+        "asset": "USDT",
+        "amount": f"{amount_usd:.2f}",
+        "spend_id": spend_id,
+        "comment": comment[:1024] if comment else "Referral payout",
+        "disable_send_notification": False,
+    })
