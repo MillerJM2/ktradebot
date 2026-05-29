@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from arbitrage.exchange_info import display_name, taker_fee, trade_url
+from config import MAX_SPREAD_PERCENT
 
 
 @dataclass
@@ -111,6 +112,9 @@ def find_spreads(
             continue
 
         spread_percent = (best_bid - best_ask) / best_ask * 100
+
+        if spread_percent > MAX_SPREAD_PERCENT:
+            continue
 
         if spread_percent >= min_spread_percent:
             spreads.append(Spread(
