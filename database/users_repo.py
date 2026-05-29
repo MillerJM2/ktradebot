@@ -68,9 +68,31 @@ async def grant_subscription(
         ) else now
         user.tier = tier
         user.subscription_expires_at = base + timedelta(days=days)
+        user.reminder_milestone = 999
         await session.commit()
         await session.refresh(user)
         return user
+
+
+async def set_reminder_milestone(telegram_id: int, milestone: int) -> None:
+    async with async_session_factory() as session:
+        await session.execute(
+            update(User)
+            .where(User.telegram_id == telegram_id)
+            .values(reminder_milestone=milestone)
+        )
+        await session.commit()
+
+
+async def get_users_with_active_subscription() -> list[User]:
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(User).where(
+                User.tier.in_(["base", "standart", "pro", "premium"]),
+                User.subscription_expires_at.is_not(None),
+            )
+        )
+        return list(result.scalars().all())
 
 
 async def set_referrer(telegram_id: int, referrer_id: int) -> None:

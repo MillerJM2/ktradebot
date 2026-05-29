@@ -20,6 +20,7 @@ from database.session import init_db
 from database.users_repo import get_active_users
 from exchanges.currencies_cache import cache as currencies_cache
 from exchanges.fetcher import fetch_all_tickers
+from subscriptions.expiry_notifier import expiry_notifier_loop
 from subscriptions.invoice_poller import invoice_poller_loop
 from subscriptions.tiers import effective_tier, features
 
@@ -116,6 +117,7 @@ async def main() -> None:
 
     asyncio.create_task(arbitrage_loop(bot))
     asyncio.create_task(invoice_poller_loop(bot))
+    asyncio.create_task(expiry_notifier_loop(bot))
 
     logger.info("Бот запущен. Жду команды в Telegram...")
     await dp.start_polling(bot)

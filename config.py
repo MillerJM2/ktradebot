@@ -19,6 +19,8 @@ PROMO_UNTIL_DATE = "12.03.2026"
 REFERRAL_PERCENT = 20
 MIN_WITHDRAW_USD = 5.0
 
+EXPIRY_CHECK_INTERVAL_SECONDS = 3600
+
 EXCHANGES = [
     "binance", "bybit", "okx", "kucoin", "gateio", "mexc",
     "bitget", "bingx", "htx", "bitfinex",

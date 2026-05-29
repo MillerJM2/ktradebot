@@ -25,6 +25,7 @@ class User(Base):
     referrer_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     referral_balance_usd: Mapped[float] = mapped_column(Float, default=0.0)
     total_referral_earned_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    reminder_milestone: Mapped[int] = mapped_column(Integer, default=999)
 
 
 class Invoice(Base):

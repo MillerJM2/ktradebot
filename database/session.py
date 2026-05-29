@@ -38,6 +38,7 @@ async def _migrate_users() -> None:
         "referrer_id": "INTEGER",
         "referral_balance_usd": "FLOAT DEFAULT 0",
         "total_referral_earned_usd": "FLOAT DEFAULT 0",
+        "reminder_milestone": "INTEGER DEFAULT 999",
     })
 
 
