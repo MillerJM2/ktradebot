@@ -53,6 +53,7 @@ BTN_TARIFFS = "💎 Тарифы"
 BTN_REFERRAL = "🔗 Реферальная система"
 BTN_SUPPORT = "💼 Техническая поддержка"
 BTN_DIAG = "🔍 Диагностика"
+BTN_BROADCAST = "📢 Рассылка"
 
 BTN_STATUS = "📊 Статус"
 BTN_THRESHOLD = "🎯 Порог спреда"
@@ -71,6 +72,7 @@ def _main_keyboard(is_admin: bool) -> ReplyKeyboardMarkup:
     ]
     if is_admin:
         rows.append([KeyboardButton(text=BTN_DIAG)])
+        rows.append([KeyboardButton(text=BTN_BROADCAST)])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
