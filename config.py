@@ -21,6 +21,9 @@ MIN_WITHDRAW_USD = 5.0
 
 EXPIRY_CHECK_INTERVAL_SECONDS = 3600
 
+CHANNEL_URL = "https://t.me/cryptosyndicate33"
+CHANNEL_NAME = "Crypto Syndicate"
+
 EXCHANGES = [
     "binance", "bybit", "okx", "kucoin", "gateio", "mexc",
     "bitget", "bingx", "htx", "bitfinex",

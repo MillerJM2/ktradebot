@@ -15,6 +15,8 @@ import uuid
 
 from config import (
     ADMIN_TELEGRAM_ID,
+    CHANNEL_NAME,
+    CHANNEL_URL,
     MIN_WITHDRAW_USD,
     PROMO_UNTIL_DATE,
     REFERRAL_PERCENT,
@@ -48,6 +50,7 @@ router = Router()
 
 
 BTN_CABINET = "👤 Личный кабинет"
+BTN_CHANNEL = "📺 Наш канал"
 BTN_ABOUT = "ℹ️ О боте"
 BTN_TARIFFS = "💎 Тарифы"
 BTN_REFERRAL = "🔗 Реферальная система"
@@ -66,6 +69,7 @@ def _main_keyboard(is_admin: bool) -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(text=BTN_CABINET)],
         [KeyboardButton(text=BTN_TARIFFS)],
+        [KeyboardButton(text=BTN_CHANNEL)],
         [KeyboardButton(text=BTN_ABOUT)],
         [KeyboardButton(text=BTN_REFERRAL)],
         [KeyboardButton(text=BTN_SUPPORT)],
@@ -297,8 +301,22 @@ async def btn_about(message: Message) -> None:
         "1. Вывод включён на бирже покупки\n"
         "2. Депозит включён на бирже продажи\n"
         "3. Есть общая работающая сеть\n"
-        "4. Реальный спред по стакану + после комиссий ≥ порог",
+        "4. Реальный спред по стакану + после комиссий ≥ порог\n\n"
+        f"📺 Новости и обзоры — в нашем канале: {CHANNEL_URL}",
         reply_markup=_main_keyboard(_is_admin(message)),
+    )
+
+
+@router.message(F.text == BTN_CHANNEL)
+async def btn_channel(message: Message) -> None:
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"📺 Перейти в {CHANNEL_NAME}", url=CHANNEL_URL)],
+    ])
+    await message.answer(
+        f"📺 <b>{CHANNEL_NAME}</b>\n\n"
+        f"Новости, обзоры арбитража, разборы кейсов.\n"
+        f"Подпишись, чтобы не пропустить — там много полезного.",
+        reply_markup=kb,
     )
 
 
