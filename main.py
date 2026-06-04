@@ -121,6 +121,23 @@ async def arbitrage_loop(bot: Bot) -> None:
         await asyncio.sleep(POLL_INTERVAL_SECONDS)
 
 
+async def funding_rate_loop(bot: Bot) -> None:
+    """Раз в 8 часов проверяет ставки финансирования и уведомляет админа."""
+    from trader.funding import scan_funding_rates, format_funding_report, FUNDING_GOOD_RATE_8H
+    logger.info("Фоновый мониторинг funding rate запущен (интервал: 8ч)")
+    while True:
+        await asyncio.sleep(8 * 3600)
+        try:
+            opportunities = await scan_funding_rates()
+            good = [o for o in opportunities if o.is_good()]
+            if good:
+                report = format_funding_report(opportunities)
+                await _send_safe(bot, ADMIN_TELEGRAM_ID, report)
+                logger.info(f"Funding rate: {len(good)} хороших возможностей, уведомление отправлено")
+        except Exception as e:
+            logger.warning(f"Ошибка мониторинга funding rate: {e}")
+
+
 async def main() -> None:
     if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN.startswith("сюда"):
         logger.error("TELEGRAM_BOT_TOKEN не задан в .env")
@@ -164,6 +181,7 @@ async def main() -> None:
     asyncio.create_task(arbitrage_loop(bot))
     asyncio.create_task(invoice_poller_loop(bot))
     asyncio.create_task(expiry_notifier_loop(bot))
+    asyncio.create_task(funding_rate_loop(bot))
 
     logger.info("Бот запущен. Жду команды в Telegram...")
     await dp.start_polling(bot)

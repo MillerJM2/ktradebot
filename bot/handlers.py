@@ -617,6 +617,7 @@ async def cmd_balances(message: Message) -> None:
     if not balances:
         await message.answer("❌ Не удалось получить балансы ни с одной биржи.")
         return
+
     lines = ["💰 <b>Балансы на биржах трейдера:</b>\n"]
     for ex_id, bal in balances.items():
         lines.append(f"<b>{ex_id.upper()}</b>")
@@ -624,6 +625,20 @@ async def cmd_balances(message: Message) -> None:
         for coin, amount in sorted(bal.coins.items(), key=lambda x: -x[1]):
             lines.append(f"  {coin}: {amount:.6f}")
         lines.append("")
+
+    # Предупреждения о дисбалансе
+    portfolio = trader.get_portfolio()
+    if portfolio:
+        warnings = portfolio.check_imbalances(balances)
+        suggestions = portfolio.rebalance_suggestions(balances)
+        if warnings:
+            lines.append("⚠️ <b>Предупреждения:</b>")
+            lines.extend(warnings)
+            lines.append("")
+        if suggestions:
+            lines.append("🔄 <b>Рекомендации по ребалансировке:</b>")
+            lines.extend(suggestions)
+
     await message.answer("\n".join(lines))
 
 
@@ -648,6 +663,17 @@ async def cmd_trades(message: Message) -> None:
             + (f" ⚠️ {t.error_msg}" if t.error_msg else "")
         )
     await message.answer("\n".join(lines))
+
+
+@router.message(Command("funding"))
+async def cmd_funding(message: Message) -> None:
+    if not _is_admin(message):
+        return
+    await message.answer("⏳ Сканирую ставки финансирования на Bybit / Binance / OKX...")
+    from trader.funding import scan_funding_rates, format_funding_report
+    opportunities = await scan_funding_rates()
+    report = format_funding_report(opportunities)
+    await message.answer(report, reply_markup=_main_keyboard(True))
 
 
 @router.message(Command("grant"))
