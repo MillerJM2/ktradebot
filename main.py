@@ -9,9 +9,13 @@ from loguru import logger
 
 from config import (
     ADMIN_TELEGRAM_ID,
+    BINANCE_API_KEY, BINANCE_API_SECRET,
+    BYBIT_API_KEY, BYBIT_API_SECRET,
     MAX_CANDIDATES_FOR_VERIFY,
+    OKX_API_KEY, OKX_API_SECRET, OKX_PASSPHRASE,
     POLL_INTERVAL_SECONDS,
     TELEGRAM_BOT_TOKEN,
+    TRADER_ENABLED,
 )
 from arbitrage.finder import find_spreads
 from arbitrage.verifier import verify_spread
@@ -30,7 +34,7 @@ logger.remove()
 logger.add(sys.stderr, level="INFO")
 
 
-async def _send_signal_safe(bot: Bot, user_id: int, text: str) -> None:
+async def _send_safe(bot: Bot, user_id: int, text: str) -> None:
     try:
         await bot.send_message(
             chat_id=user_id,
@@ -41,7 +45,23 @@ async def _send_signal_safe(bot: Bot, user_id: int, text: str) -> None:
         logger.warning(f"Не отправилось user_id={user_id}: {e}")
 
 
+def _build_trader_configs() -> dict:
+    configs = {}
+    if BYBIT_API_KEY and BYBIT_API_SECRET:
+        configs["bybit"] = {"api_key": BYBIT_API_KEY, "api_secret": BYBIT_API_SECRET}
+    if BINANCE_API_KEY and BINANCE_API_SECRET:
+        configs["binance"] = {"api_key": BINANCE_API_KEY, "api_secret": BINANCE_API_SECRET}
+    if OKX_API_KEY and OKX_API_SECRET:
+        configs["okx"] = {
+            "api_key": OKX_API_KEY,
+            "api_secret": OKX_API_SECRET,
+            "passphrase": OKX_PASSPHRASE,
+        }
+    return configs
+
+
 async def arbitrage_loop(bot: Bot) -> None:
+    from trader.loop import get_trader
     logger.info("Фоновый цикл арбитража запущен")
     while True:
         try:
@@ -66,6 +86,15 @@ async def arbitrage_loop(bot: Bot) -> None:
             verified.sort(key=lambda v: v.net_profit_percent, reverse=True)
             logger.info(f"Прошли все фильтры: {len(verified)}")
 
+            # ── Авто-трейдер ──────────────────────────────────────────────────
+            trader = get_trader()
+            if trader and verified:
+                async def _notify(text: str) -> None:
+                    await _send_safe(bot, ADMIN_TELEGRAM_ID, text)
+
+                await trader.process_spreads(verified, notify=_notify)
+
+            # ── Рассылка сигналов подписчикам ─────────────────────────────────
             users = await get_active_users()
             send_tasks = []
             for user in users:
@@ -82,11 +111,10 @@ async def arbitrage_loop(bot: Bot) -> None:
                     and v.symbol.split("/", 1)[1] in feats.quote_currencies
                 ]
                 for sig in personal[:feats.max_signals_per_cycle]:
-                    send_tasks.append(
-                        _send_signal_safe(bot, user.telegram_id, sig.format_message())
-                    )
+                    send_tasks.append(_send_safe(bot, user.telegram_id, sig.format_message()))
             if send_tasks:
                 await asyncio.gather(*send_tasks, return_exceptions=True)
+
         except Exception as e:
             logger.exception(f"Ошибка в цикле арбитража: {e}")
 
@@ -116,6 +144,22 @@ async def main() -> None:
     me = await bot.get_me()
     runtime.bot_username = me.username or ""
     logger.info(f"Бот @{runtime.bot_username} готов")
+
+    # ── Авто-трейдер ──────────────────────────────────────────────────────────
+    trader_configs = _build_trader_configs()
+    if trader_configs:
+        from trader.accounts import TraderAccounts
+        from trader.loop import AutoTrader, set_trader
+        accounts = TraderAccounts(trader_configs)
+        trader = AutoTrader(accounts)
+        trader.set_enabled(TRADER_ENABLED)
+        set_trader(trader)
+        logger.info(
+            f"Авто-трейдер {'включён' if TRADER_ENABLED else 'настроен (выключен)'}, "
+            f"биржи: {list(trader_configs.keys())}"
+        )
+    else:
+        logger.info("Авто-трейдер: API-ключи не заданы, торговля отключена")
 
     asyncio.create_task(arbitrage_loop(bot))
     asyncio.create_task(invoice_poller_loop(bot))

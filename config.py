@@ -46,3 +46,20 @@ CURRENCIES_REFRESH_SECONDS = 300
 MAX_CANDIDATES_FOR_VERIFY = 40
 
 REQUEST_TIMEOUT = 20000
+
+# ── Авто-трейдер ──────────────────────────────────────────────────────────────
+TRADER_ENABLED = os.getenv("TRADER_ENABLED", "false").lower() == "true"
+TRADER_AMOUNT_USD = float(os.getenv("TRADER_AMOUNT_USD", "200"))
+TRADER_MIN_PROFIT_PCT = float(os.getenv("TRADER_MIN_PROFIT_PCT", "1.5"))
+TRADER_MAX_DAILY_TRADES = int(os.getenv("TRADER_MAX_DAILY_TRADES", "10"))
+TRADER_MAX_DAILY_LOSS_USD = float(os.getenv("TRADER_MAX_DAILY_LOSS_USD", "100"))
+
+BYBIT_API_KEY = os.getenv("BYBIT_API_KEY", "")
+BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET", "")
+
+BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
+BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
+
+OKX_API_KEY = os.getenv("OKX_API_KEY", "")
+OKX_API_SECRET = os.getenv("OKX_API_SECRET", "")
+OKX_PASSPHRASE = os.getenv("OKX_PASSPHRASE", "")

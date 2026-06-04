@@ -1,5 +1,5 @@
 """CRUD-операции для пользователей."""
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,7 +27,7 @@ async def get_or_create_user(
             await session.commit()
             await session.refresh(user)
         else:
-            user.last_active_at = datetime.utcnow()
+            user.last_active_at = datetime.now(timezone.utc)
             if username and user.username != username:
                 user.username = username
             await session.commit()
@@ -62,10 +62,9 @@ async def grant_subscription(
         user = await session.get(User, telegram_id)
         if user is None:
             return None
-        now = datetime.utcnow()
-        base = user.subscription_expires_at if (
-            user.subscription_expires_at and user.subscription_expires_at > now
-        ) else now
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        expires = user.subscription_expires_at
+        base = expires if (expires and expires.replace(tzinfo=None) > now) else now
         user.tier = tier
         user.subscription_expires_at = base + timedelta(days=days)
         user.reminder_milestone = 999
