@@ -24,6 +24,21 @@ ALL_EXCHANGES = (
 
 
 TIERS: dict[str, TierFeatures] = {
+    "trial": TierFeatures(
+        name="Пробный доступ",
+        price_usd=0.0,
+        old_price_usd=0.0,
+        duration_days=3,
+        min_threshold=2.0,
+        allowed_exchanges=ALL_EXCHANGES,
+        quote_currencies=("USDT",),
+        max_signals_per_cycle=3,
+        bullets=(
+            "3 дня бесплатно",
+            "Реальные проверенные сигналы",
+            "10 CEX бирж",
+        ),
+    ),
     "free": TierFeatures(
         name="Без подписки",
         price_usd=0.0,

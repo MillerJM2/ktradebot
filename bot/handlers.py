@@ -47,6 +47,7 @@ from subscriptions.crypto_bot import (
     transfer_usdt,
 )
 from subscriptions.tiers import PAID_TIERS, TIERS, effective_tier, features
+from datetime import datetime, timezone
 
 
 router = Router()
@@ -112,11 +113,19 @@ def _format_expiry(dt) -> str:
     return dt.strftime("%Y-%m-%d %H:%M UTC")
 
 
+def _trial_days_left(expires_at) -> int:
+    if expires_at is None:
+        return 0
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    delta = expires_at.replace(tzinfo=None) - now
+    return max(0, int(delta.total_seconds() / 86400) + 1)
+
+
 def _no_sub_text() -> str:
     return (
-        "🔒 <b>Доступ к инструменту заблокирован</b>\n\n"
-        "Подписка: ❌\n\n"
-        "Обратитесь: <i>скоро будет ссылка</i>, для получения доступа."
+        "🔒 <b>Доступ к сигналам закрыт</b>\n\n"
+        "Оформи подписку чтобы получать реальные межбиржевые вилки.\n\n"
+        "Раздел: <b>💎 Тарифы</b>"
     )
 
 
@@ -141,24 +150,39 @@ async def cmd_start(message: Message) -> None:
     user = await get_or_create_user(
         message.from_user.id, message.from_user.username
     )
+    is_new = user.trial_used and user.tier == "trial"
     if referrer_id is not None and user.referrer_id is None:
         await set_referrer(message.from_user.id, referrer_id)
     is_admin = _is_admin(message)
     tier_eff = effective_tier(user.tier, user.subscription_expires_at)
     feats = features(tier_eff)
-    has_sub = tier_eff in PAID_TIERS or tier_eff == "admin"
-    if has_sub:
-        body = (
+    has_sub = tier_eff in PAID_TIERS or tier_eff in ("admin", "trial")
+
+    if tier_eff == "trial":
+        days = _trial_days_left(user.subscription_expires_at)
+        if is_new:
+            text = (
+                "👋 <b>Добро пожаловать в KTradeClub!</b>\n\n"
+                "🎁 Тебе активирован <b>бесплатный пробный доступ на 3 дня</b>.\n\n"
+                "Бот отслеживает цены на 10 биржах и присылает только проверенные вилки — "
+                "каждый сигнал прошёл 4 фильтра включая реальный стакан.\n\n"
+                f"⏳ Доступ активен ещё <b>{days} дн.</b> — пользуйся!"
+            )
+        else:
+            text = (
+                f"👋 <b>KTradeClub</b>\n\n"
+                f"⏳ Пробный доступ: <b>{days} дн. осталось</b>"
+            )
+    elif has_sub:
+        text = (
+            f"👋 <b>KTradeClub</b>\n\n"
             f"Твой тариф: <b>{feats.name}</b>\n"
             f"Доступно бирж: {len(feats.allowed_exchanges)}\n"
-            f"Минимальный порог: {feats.min_threshold}%"
+            f"Порог сигнала: от {feats.min_threshold}%"
         )
-        text = f"👋 <b>Добро пожаловать в KTradeClub</b>\n\n{body}"
     else:
-        text = (
-            f"👋 <b>Добро пожаловать в KTradeClub</b>\n\n"
-            f"{_no_sub_text()}"
-        )
+        text = f"👋 <b>Добро пожаловать в KTradeClub</b>\n\n{_no_sub_text()}"
+
     await message.answer(text, reply_markup=_main_keyboard(is_admin))
 
 
@@ -169,7 +193,7 @@ async def btn_cabinet(message: Message) -> None:
     )
     tier_eff = effective_tier(user.tier, user.subscription_expires_at)
     feats = features(tier_eff)
-    has_sub = tier_eff in PAID_TIERS or tier_eff == "admin"
+    has_sub = tier_eff in PAID_TIERS or tier_eff in ("admin", "trial")
     if not has_sub:
         await message.answer(
             _no_sub_text(),
@@ -177,10 +201,14 @@ async def btn_cabinet(message: Message) -> None:
         )
         return
     paused_str = "на паузе ⏸" if user.paused else "активен ✅"
-    sub_line = (
-        f"Тариф: <b>{feats.name}</b> до "
-        f"{_format_expiry(user.subscription_expires_at)}"
-    )
+    if tier_eff == "trial":
+        days = _trial_days_left(user.subscription_expires_at)
+        sub_line = f"⏳ <b>Пробный доступ</b> — осталось <b>{days} дн.</b>"
+    else:
+        sub_line = (
+            f"Тариф: <b>{feats.name}</b> до "
+            f"{_format_expiry(user.subscription_expires_at)}"
+        )
     await message.answer(
         f"👤 <b>Личный кабинет</b>\n\n"
         f"{sub_line}\n"
@@ -349,8 +377,15 @@ async def btn_tariffs(message: Message) -> None:
         message.from_user.id, message.from_user.username
     )
     tier_eff = effective_tier(user.tier, user.subscription_expires_at)
-    if tier_eff in ("admin",):
+    if tier_eff == "admin":
         header = f"💎 <b>Тарифы</b>\n\nТвой текущий: <b>{features(tier_eff).name}</b>"
+    elif tier_eff == "trial":
+        days = _trial_days_left(user.subscription_expires_at)
+        header = (
+            f"💎 <b>Тарифы</b>\n\n"
+            f"⏳ У тебя пробный доступ — осталось <b>{days} дн.</b>\n"
+            f"Оформи подписку чтобы продолжить получать сигналы:"
+        )
     elif tier_eff in PAID_TIERS:
         header = (
             f"💎 <b>Тарифы</b>\n\n"

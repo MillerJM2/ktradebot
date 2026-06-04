@@ -30,6 +30,7 @@ class User(Base):
     referral_balance_usd: Mapped[float] = mapped_column(Float, default=0.0)
     total_referral_earned_usd: Mapped[float] = mapped_column(Float, default=0.0)
     reminder_milestone: Mapped[int] = mapped_column(Integer, default=999)
+    trial_used: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class Invoice(Base):

@@ -16,13 +16,20 @@ async def get_or_create_user(
     async with async_session_factory() as session:
         user = await session.get(User, telegram_id)
         if user is None:
+            is_admin = telegram_id == ADMIN_TELEGRAM_ID
+            now = datetime.now(timezone.utc)
             user = User(
                 telegram_id=telegram_id,
                 username=username,
-                tier="admin" if telegram_id == ADMIN_TELEGRAM_ID else "free",
+                tier="admin" if is_admin else "trial",
                 threshold=DEFAULT_SPREAD_THRESHOLD,
                 paused=False,
+                trial_used=not is_admin,
+                # Пропускаем 7-д и 3-д напоминания — у триала только 3 дня
+                reminder_milestone=3 if not is_admin else 999,
             )
+            if not is_admin:
+                user.subscription_expires_at = now + timedelta(days=3)
             session.add(user)
             await session.commit()
             await session.refresh(user)
@@ -87,7 +94,7 @@ async def get_users_with_active_subscription() -> list[User]:
     async with async_session_factory() as session:
         result = await session.execute(
             select(User).where(
-                User.tier.in_(["base", "standart", "pro", "premium"]),
+                User.tier.in_(["trial", "base", "standart", "pro", "premium"]),
                 User.subscription_expires_at.is_not(None),
             )
         )
