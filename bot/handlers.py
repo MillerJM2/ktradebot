@@ -20,6 +20,9 @@ from config import (
     MIN_WITHDRAW_USD,
     PROMO_UNTIL_DATE,
     REFERRAL_PERCENT,
+    TRADER_AMOUNT_USD,
+    TRADER_MAX_DAILY_TRADES,
+    TRADER_MIN_PROFIT_PCT,
 )
 from bot.runtime import runtime
 from database.invoices_repo import create_invoice as save_invoice
@@ -57,6 +60,7 @@ BTN_REFERRAL = "🔗 Реферальная система"
 BTN_SUPPORT = "💼 Техническая поддержка"
 BTN_DIAG = "🔍 Диагностика"
 BTN_BROADCAST = "📢 Рассылка"
+BTN_TRADER = "🤖 Авто-трейдер"
 
 BTN_STATUS = "📊 Статус"
 BTN_THRESHOLD = "🎯 Порог спреда"
@@ -77,6 +81,7 @@ def _main_keyboard(is_admin: bool) -> ReplyKeyboardMarkup:
     if is_admin:
         rows.append([KeyboardButton(text=BTN_DIAG)])
         rows.append([KeyboardButton(text=BTN_BROADCAST)])
+        rows.append([KeyboardButton(text=BTN_TRADER)])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
@@ -505,9 +510,144 @@ async def cb_withdraw(callback: CallbackQuery) -> None:
 async def btn_support(message: Message) -> None:
     await message.answer(
         "<b>💼 Техническая поддержка</b>\n\n"
-        "⏳ Скоро здесь появится контакт поддержки.",
+        "По всем вопросам пишите администратору: @ktradeclub_support",
         reply_markup=_main_keyboard(_is_admin(message)),
     )
+
+
+# ── Авто-трейдер (только для админа) ──────────────────────────────────────────
+
+@router.message(F.text == BTN_TRADER)
+@router.message(Command("trader"))
+async def cmd_trader(message: Message) -> None:
+    if not _is_admin(message):
+        return
+    from trader.loop import get_trader
+    from database.trades_repo import get_daily_stats, get_all_time_stats
+
+    trader = get_trader()
+    if trader is None:
+        await message.answer(
+            "🤖 <b>Авто-трейдер</b>\n\n"
+            "❌ Не настроен. Заполни API-ключи бирж в .env\n"
+            "(BYBIT_API_KEY, BINANCE_API_KEY, OKX_API_KEY)",
+            reply_markup=_main_keyboard(True),
+        )
+        return
+
+    status_icon = "✅ Включён" if trader.is_enabled() else "⏸ Выключен"
+    exchanges = ", ".join(trader.accounts.enabled_exchanges()) or "—"
+
+    day_stats = await get_daily_stats()
+    all_stats = await get_all_time_stats()
+
+    balances = await trader.accounts.fetch_all_balances()
+    bal_lines = []
+    for ex_id, bal in balances.items():
+        top_coins = ", ".join(
+            f"{amt:.4f} {coin}"
+            for coin, amt in sorted(bal.coins.items(), key=lambda x: -x[1])[:3]
+        )
+        coins_str = f" | {top_coins}" if top_coins else ""
+        bal_lines.append(f"• <b>{ex_id}</b>: {bal.usdt:,.2f} USDT{coins_str}")
+
+    toggle_text = "/traderoff — выключить" if trader.is_enabled() else "/traderon — включить"
+
+    await message.answer(
+        f"🤖 <b>Авто-трейдер</b>\n\n"
+        f"Статус: <b>{status_icon}</b>\n"
+        f"Биржи: {exchanges}\n"
+        f"Размер сделки: ${TRADER_AMOUNT_USD:,.0f}\n"
+        f"Мин. профит: {TRADER_MIN_PROFIT_PCT}%\n"
+        f"Лимит сделок/день: {TRADER_MAX_DAILY_TRADES}\n\n"
+        f"💰 <b>Балансы:</b>\n" + "\n".join(bal_lines or ["—"]) + "\n\n"
+        f"📊 <b>Сегодня:</b> сделок {day_stats['trade_count']}, "
+        f"профит {day_stats['net_profit']:+.2f} USDT\n"
+        f"📅 <b>Всего:</b> сделок {all_stats['trade_count']}, "
+        f"профит {all_stats['net_profit']:+.2f} USDT\n\n"
+        f"{toggle_text}\n"
+        f"/trades — последние сделки\n"
+        f"/balances — только балансы",
+        reply_markup=_main_keyboard(True),
+    )
+
+
+@router.message(Command("traderon"))
+async def cmd_traderon(message: Message) -> None:
+    if not _is_admin(message):
+        return
+    from trader.loop import get_trader
+    trader = get_trader()
+    if trader is None:
+        await message.answer("❌ Авто-трейдер не настроен (нет API-ключей в .env).")
+        return
+    trader.set_enabled(True)
+    await message.answer(
+        "✅ <b>Авто-трейдер включён.</b>\n\n"
+        f"Биржи: {', '.join(trader.accounts.enabled_exchanges())}\n"
+        f"Размер сделки: ${TRADER_AMOUNT_USD:,.0f} | Мин. профит: {TRADER_MIN_PROFIT_PCT}%\n\n"
+        "⚠️ Убедись, что на биржах есть USDT <b>и</b> монеты для продажи."
+    )
+
+
+@router.message(Command("traderoff"))
+async def cmd_traderoff(message: Message) -> None:
+    if not _is_admin(message):
+        return
+    from trader.loop import get_trader
+    trader = get_trader()
+    if trader is None:
+        await message.answer("❌ Авто-трейдер не настроен.")
+        return
+    trader.set_enabled(False)
+    await message.answer("⏸ <b>Авто-трейдер выключен.</b>")
+
+
+@router.message(Command("balances"))
+async def cmd_balances(message: Message) -> None:
+    if not _is_admin(message):
+        return
+    from trader.loop import get_trader
+    trader = get_trader()
+    if trader is None:
+        await message.answer("❌ Авто-трейдер не настроен (нет API-ключей).")
+        return
+    await message.answer("⏳ Запрашиваю балансы...")
+    balances = await trader.accounts.fetch_all_balances()
+    if not balances:
+        await message.answer("❌ Не удалось получить балансы ни с одной биржи.")
+        return
+    lines = ["💰 <b>Балансы на биржах трейдера:</b>\n"]
+    for ex_id, bal in balances.items():
+        lines.append(f"<b>{ex_id.upper()}</b>")
+        lines.append(f"  USDT: {bal.usdt:,.2f}")
+        for coin, amount in sorted(bal.coins.items(), key=lambda x: -x[1]):
+            lines.append(f"  {coin}: {amount:.6f}")
+        lines.append("")
+    await message.answer("\n".join(lines))
+
+
+@router.message(Command("trades"))
+async def cmd_trades(message: Message) -> None:
+    if not _is_admin(message):
+        return
+    from database.trades_repo import get_recent_trades
+    trades = await get_recent_trades(15)
+    if not trades:
+        await message.answer("📭 Сделок пока нет.")
+        return
+    lines = [f"📋 <b>Последние {len(trades)} сделок:</b>\n"]
+    for t in trades:
+        sign = "✅" if t.net_profit_usd > 0 else "❌"
+        lines.append(
+            f"{sign} {t.symbol} {t.buy_exchange}→{t.sell_exchange}\n"
+            f"   ${t.amount_usdt:,.0f} | "
+            f"покуп {t.buy_price:.4f} → прод {t.sell_price:.4f} | "
+            f"<b>{t.net_profit_usd:+.2f} USDT</b>\n"
+            f"   {t.executed_at.strftime('%m-%d %H:%M')}"
+            + (f" ⚠️ {t.error_msg}" if t.error_msg else "")
+        )
+    await message.answer("\n".join(lines))
 
 
 @router.message(Command("grant"))

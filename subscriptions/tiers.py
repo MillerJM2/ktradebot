@@ -1,6 +1,6 @@
 """Тарифы KTradeClub: BASE, STANDART, PRO, PREMIUM."""
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 @dataclass(frozen=True)
@@ -128,6 +128,6 @@ def effective_tier(tier: str, expires_at: datetime | None) -> str:
         return tier
     if expires_at is None:
         return "free"
-    if expires_at < datetime.utcnow():
+    if expires_at.replace(tzinfo=None) < datetime.now(timezone.utc).replace(tzinfo=None):
         return "free"
     return tier
