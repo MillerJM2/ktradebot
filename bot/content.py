@@ -21,6 +21,13 @@ from bot.runtime import runtime
 from config import ADMIN_TELEGRAM_ID, CHANNEL_URL
 from database.settings_repo import get_setting, set_setting
 from database.signals_repo import stats_aggregate, top_routes, top_symbols
+from database.images_repo import (
+    add_image,
+    counts_by_category as images_counts_by_category,
+    delete_image,
+    list_images,
+    random_for_category as random_image_for_category,
+)
 from database.templates_repo import (
     create_post,
     create_template,
@@ -47,6 +54,11 @@ DEFAULT_SCHEDULE = "10:00,15:00,20:00"
 _pending_template_input: dict[int, dict] = {}  # admin_id -> {"step": ..., "name": ..., "category": ...}
 _pending_edit: dict[int, int] = {}  # admin_id -> post_id
 _pending_import: set[int] = set()  # admin_id
+_pending_image: dict[int, dict] = {}  # admin_id -> {"category": str | None}
+
+
+def _waiting_image(message: Message) -> bool:
+    return message.from_user and message.from_user.id in _pending_image
 
 
 def _waiting_import(message: Message) -> bool:
@@ -271,11 +283,18 @@ async def _post_draft(bot: Bot, template, slot_iso: str) -> None:
 
     header = f"📝 <b>Черновик</b> · {slot_iso}\nШаблон: <code>{template.name}</code>\n\n"
     full_text = header + rendered
+
+    photo_id = template.photo_file_id
+    if not photo_id:
+        img = await random_image_for_category(template.category)
+        if img:
+            photo_id = img.file_id
+
     try:
-        if template.photo_file_id:
+        if photo_id:
             sent = await bot.send_photo(
                 chat_id=admin_chat,
-                photo=template.photo_file_id,
+                photo=photo_id,
                 caption=full_text[:1024],
             )
         else:
@@ -304,6 +323,104 @@ async def _post_draft(bot: Bot, template, slot_iso: str) -> None:
         logger.warning(f"set draft kb failed: {e}")
 
 
+async def _ai_generate_for_category(category: str | None) -> str | None:
+    """Полная AI-генерация (фолбэк, когда в категории нет шаблонов).
+    Включается флагом content_ai_fallback. Нужен OPENAI_API_KEY.
+    """
+    if (await get_setting("content_ai_fallback", "false") or "").lower() != "true":
+        return None
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return None
+
+    custom_prompt = await get_setting(f"content_prompt_{category or 'default'}")
+    if not custom_prompt:
+        custom_prompt = _DEFAULT_PROMPTS.get(category or "", _DEFAULT_PROMPTS["default"])
+
+    vars_ = await _build_variables()
+    ctx = (
+        f"Контекст:\n"
+        f"- Канал: KTradeClub / Crypto Syndicate\n"
+        f"- Тема: межбиржевой арбитраж криптовалют\n"
+        f"- Текущая статистика: сигналов 24ч={vars_['SIGNALS_24H']}, "
+        f"топ пара={vars_['TOP_PAIR']}, макс. спред={vars_['MAX_SPREAD']}, "
+        f"средний спред={vars_['AVG_SPREAD']}, топ маршрут={vars_['TOP_ROUTE']}.\n"
+        f"- Бот: {{BOT_LINK}}, канал: {{CHANNEL_LINK}} — оставь как есть, подставится позже.\n\n"
+        f"Задание:\n{custom_prompt}\n\n"
+        f"Ответ — готовый текст поста, без кавычек, без вступительных фраз."
+    )
+
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as s:
+            async with s.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": "gpt-4o-mini",
+                    "messages": [{"role": "user", "content": ctx}],
+                    "temperature": 0.8,
+                    "max_tokens": 800,
+                },
+                timeout=40,
+            ) as r:
+                data = await r.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        logger.warning(f"AI fallback generate failed: {e}")
+        return None
+
+
+_DEFAULT_PROMPTS = {
+    "default": "Напиши пост о криптоарбитраже на 800-1200 символов. Живой, без воды, с эмодзи.",
+    "education": (
+        "Напиши обучающий пост о межбиржевом криптоарбитраже на 1000-1500 символов. "
+        "Объясни одну конкретную тему просто. Живо, без воды, с эмодзи. "
+        "В конце призыв перейти в бот: {BOT_LINK}"
+    ),
+    "stats": (
+        "Напиши пост-сводку по статистике бота: используй цифры из контекста. "
+        "Дай интерпретацию. 600-900 символов. В конце призыв: {BOT_LINK}"
+    ),
+    "promo": (
+        "Напиши промо-пост о боте KTradeClub. Подчёркни 4 фильтра, 10 бирж, 3 дня бесплатно. "
+        "Без агрессии, без обещаний x10. 800-1100 символов. CTA: {BOT_LINK}"
+    ),
+    "signals": (
+        "Напиши пост-демо с примером арбитражного сигнала. Покажи формат: монета, биржи, "
+        "цены, спред, расчёт прибыли на $1000. Используй цифры близкие к реальным. "
+        "В конце призыв: {BOT_LINK}"
+    ),
+}
+
+
+async def _trigger_post(bot: Bot, slot_iso: str, slot_cat: str | None) -> None:
+    if slot_cat:
+        templates = await list_templates(only_enabled=True, category=slot_cat)
+        if not templates:
+            templates = await list_templates(only_enabled=True, category=None)
+    else:
+        templates = await list_templates(only_enabled=True)
+
+    if templates:
+        tmpl = random.choice(templates)
+        await _post_draft(bot, tmpl, slot_iso)
+        return
+
+    ai_text = await _ai_generate_for_category(slot_cat)
+    if not ai_text:
+        logger.info(f"slot {slot_iso}: no templates and no AI fallback (cat={slot_cat})")
+        return
+
+    class _FauxTemplate:
+        id = 0
+        name = f"ai_{slot_cat or 'generic'}"
+        category = slot_cat
+        text = ai_text
+        photo_file_id = None
+    await _post_draft(bot, _FauxTemplate(), slot_iso)
+
+
 async def content_scheduler_loop(bot: Bot) -> None:
     logger.info("Фоновый цикл SMM-агента запущен")
     while True:
@@ -320,18 +437,7 @@ async def content_scheduler_loop(bot: Bot) -> None:
                 target = now_msk.replace(hour=int(hh), minute=int(mm))
                 slot_iso = target.strftime("%Y-%m-%dT%H:%M")
                 if now_msk >= target and slot_iso > last_iso:
-                    if slot_cat:
-                        templates = await list_templates(only_enabled=True, category=slot_cat)
-                        if not templates:
-                            templates = await list_templates(only_enabled=True, category=None)
-                    else:
-                        templates = await list_templates(only_enabled=True)
-                    if not templates:
-                        logger.info(f"slot {slot_iso} fired, no templates (cat={slot_cat})")
-                        await _set_last_slot(slot_iso)
-                        break
-                    tmpl = random.choice(templates)
-                    await _post_draft(bot, tmpl, slot_iso)
+                    await _trigger_post(bot, slot_iso, slot_cat)
                     await _set_last_slot(slot_iso)
                     break
         except Exception as e:
@@ -435,8 +541,29 @@ async def cmd_cancel_template(message: Message) -> None:
         _pending_import.discard(message.from_user.id)
         await message.answer("❌ Импорт отменён.")
         cancelled = True
+    if _pending_image.pop(message.from_user.id, None):
+        await message.answer("❌ Загрузка картинки отменена.")
+        cancelled = True
     if not cancelled:
         return
+
+
+@router.message(_waiting_image)
+async def handle_image_upload(message: Message) -> None:
+    user_id = message.from_user.id
+    state = _pending_image.pop(user_id, {})
+    category = state.get("category") or None
+    if not message.photo:
+        await message.answer("❌ Жду картинку (фото).")
+        return
+    file_id = message.photo[-1].file_id
+    description = (message.caption or "").strip() or None
+    img = await add_image(file_id, category, description)
+    cat_str = f" в категорию <b>{img.category}</b>" if img.category else " в общий пул"
+    await message.answer(
+        f"✅ Картинка #{img.id} добавлена{cat_str}.\n"
+        f"Использовать ещё одну: <code>/content image add {img.category or ''}</code>"
+    )
 
 
 @router.message(_waiting_import)
@@ -616,13 +743,20 @@ async def cmd_content(message: Message) -> None:
             f"<code>/content list</code> — все шаблоны\n"
             f"<code>/content del N</code> / <code>toggle N</code> / <code>preview N</code>\n"
             f"<code>/content categories</code> — список категорий\n\n"
+            f"<b>Картинки:</b>\n"
+            f"<code>/content image</code> — обзор библиотеки\n"
+            f"<code>/content image add [CATEGORY]</code> — загрузить\n"
+            f"<code>/content image list [CATEGORY]</code> / <code>del N</code>\n\n"
+            f"<b>AI:</b>\n"
+            f"<code>/content ai on</code> / <code>off</code> — рерайт текста шаблонов\n"
+            f"<code>/content ai_fallback on</code> / <code>off</code> — генерация поста, когда нет шаблонов\n"
+            f"<code>/content prompt</code> — управление промптами для AI-генерации\n\n"
             f"<b>Публикация:</b>\n"
             f"<code>/content post N</code> — опубликовать шаблон #N прямо сейчас (в админ-канал на апрув)\n"
             f"<code>/content history</code> — последние 20 черновиков\n\n"
             f"<b>Настройки:</b>\n"
             f"<code>/content set_admin -1001234567890</code>\n"
             f"<code>/content schedule 10:00=stats,15:00=education,20:00=promo</code>\n"
-            f"<code>/content ai on</code> / <code>off</code>\n"
             f"<code>/content vars</code>"
         )
         return
@@ -757,6 +891,97 @@ async def cmd_content(message: Message) -> None:
         await message.answer(
             (f"✅ AI-рерайт включён.{note}") if on else "⏸ AI-рерайт выключен."
         )
+    elif sub == "ai_fallback":
+        on = arg.lower() in ("on", "true", "1", "yes")
+        await set_setting("content_ai_fallback", "true" if on else "false")
+        note = "" if os.getenv("OPENAI_API_KEY") else "\n⚠️ OPENAI_API_KEY не задан в .env — генерация не сработает."
+        await message.answer(
+            (f"✅ AI-фолбэк включён.{note}\n"
+             f"Если в категории нет шаблонов — бот сгенерит пост сам.")
+            if on else "⏸ AI-фолбэк выключен."
+        )
+    elif sub == "image":
+        rest = arg.split(maxsplit=1)
+        action = rest[0].lower() if rest else ""
+        action_arg = rest[1] if len(rest) > 1 else ""
+        if not action:
+            counts = await images_counts_by_category()
+            if not counts:
+                await message.answer(
+                    "🖼 <b>Библиотека картинок пуста.</b>\n\n"
+                    "Добавить: <code>/content image add</code> "
+                    "или <code>/content image add CATEGORY</code>\n"
+                    "Список: <code>/content image list</code> / <code>list CATEGORY</code>\n"
+                    "Удалить: <code>/content image del N</code>"
+                )
+                return
+            lines = ["🖼 <b>Библиотека картинок</b>\n"]
+            for c, n in sorted(counts.items()):
+                lines.append(f"• {c} — {n}")
+            lines.append(
+                "\n<code>/content image add [CATEGORY]</code> | "
+                "<code>list</code> | <code>del N</code>"
+            )
+            await message.answer("\n".join(lines))
+        elif action == "add":
+            category = action_arg.strip().lower() or None
+            _pending_image[message.from_user.id] = {"category": category}
+            cat_str = f" в категорию <b>{category}</b>" if category else " в общий пул"
+            await message.answer(
+                f"📸 Пришли картинку для добавления{cat_str}.\n"
+                f"Подпись (caption) сохранится как описание.\n"
+                f"Для отмены — /cancel"
+            )
+        elif action == "list":
+            category = action_arg.strip().lower() or None
+            imgs = await list_images(category)
+            if not imgs:
+                await message.answer("Пусто.")
+                return
+            lines = [f"🖼 <b>Картинки{(' [' + category + ']') if category else ''}:</b>"]
+            for i in imgs[:30]:
+                cat = f" [{i.category}]" if i.category else ""
+                desc = f" — <i>{i.description}</i>" if i.description else ""
+                lines.append(f"#{i.id}{cat}{desc}")
+            if len(imgs) > 30:
+                lines.append(f"... и ещё {len(imgs) - 30}")
+            await message.answer("\n".join(lines))
+        elif action == "del":
+            try:
+                iid = int(action_arg)
+            except ValueError:
+                await message.answer("❌ Использование: <code>/content image del 5</code>")
+                return
+            ok = await delete_image(iid)
+            await message.answer("✅ Удалена." if ok else "❌ Не найдена.")
+        else:
+            await message.answer("Неизвестное действие. <code>/content image</code> — справка.")
+    elif sub == "prompt":
+        rest = arg.split(maxsplit=1)
+        if not rest:
+            cats = sorted(_DEFAULT_PROMPTS.keys())
+            lines = ["<b>AI-промпты по категориям:</b>\n"]
+            for c in cats:
+                custom = await get_setting(f"content_prompt_{c}")
+                src = "кастомный" if custom else "дефолт"
+                lines.append(f"• <code>{c}</code> — {src}")
+            lines.append(
+                "\nЗадать: <code>/content prompt CATEGORY текст промпта</code>\n"
+                "Сброс на дефолт: <code>/content prompt CATEGORY -</code>"
+            )
+            await message.answer("\n".join(lines))
+            return
+        cat = rest[0].lower()
+        if len(rest) < 2:
+            await message.answer("❌ Не хватает текста промпта.")
+            return
+        text = rest[1].strip()
+        if text == "-":
+            await set_setting(f"content_prompt_{cat}", "")
+            await message.answer(f"✅ Промпт для <b>{cat}</b> сброшен на дефолт.")
+        else:
+            await set_setting(f"content_prompt_{cat}", text)
+            await message.answer(f"✅ Промпт для <b>{cat}</b> сохранён.")
     elif sub == "vars":
         await message.answer(
             "<b>Доступные плейсхолдеры:</b>\n\n"
