@@ -1,7 +1,9 @@
 """SMM-агент: шаблоны контента, расписание, черновики в админ-канал, апрув в основной."""
 import asyncio
+import io
 import os
 import random
+import re
 from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot, F, Router
@@ -44,6 +46,70 @@ DEFAULT_SCHEDULE = "10:00,15:00,20:00"
 
 _pending_template_input: dict[int, dict] = {}  # admin_id -> {"step": ..., "name": ..., "category": ...}
 _pending_edit: dict[int, int] = {}  # admin_id -> post_id
+_pending_import: set[int] = set()  # admin_id
+
+
+def _waiting_import(message: Message) -> bool:
+    return message.from_user and message.from_user.id in _pending_import
+
+
+def _md_to_html(text: str) -> str:
+    """Конвертация базового Markdown в HTML для Telegram."""
+    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', text)
+    text = re.sub(r'\*\*([^*]+?)\*\*', r'<b>\1</b>', text)
+    text = re.sub(r'__([^_]+?)__', r'<b>\1</b>', text)
+    text = re.sub(r'(?<![*\w])\*([^*\n]+?)\*(?![*\w])', r'<i>\1</i>', text)
+    text = text.replace("@KTradeClubBot", "{BOT_LINK}")
+    text = text.replace("@cryptosyndicate33", "{CHANNEL_LINK}")
+    return text
+
+
+def _guess_category(title: str) -> str | None:
+    t = title.lower()
+    if "знакомств" in t:
+        return "intro"
+    if "образован" in t or "продвинут" in t:
+        return "education"
+    if "сигнал" in t:
+        return "signals"
+    if "результат" in t or "кулис" in t:
+        return "stats"
+    if "промо" in t or "tgads" in t or "бесплатн" in t:
+        return "promo"
+    if "социальн" in t or "отзыв" in t:
+        return "reviews"
+    if "кейс" in t:
+        return "cases"
+    return None
+
+
+def _slugify(title: str) -> str:
+    s = re.sub(r'[^\w]+', '_', title.lower())[:40].strip('_')
+    return s or "untitled"
+
+
+def _parse_content_plan(md_text: str) -> list[dict]:
+    """Парсит markdown с постами вида '### ПОСТ №N — Title' → список dict."""
+    posts: list[dict] = []
+    pattern = re.compile(
+        r'### ПОСТ №(\d+)\s*—\s*(.+?)\n(.*?)(?=### ПОСТ №|\Z)',
+        re.DOTALL,
+    )
+    for m in pattern.finditer(md_text):
+        num = int(m.group(1))
+        title = m.group(2).strip()
+        body = m.group(3).strip()
+        body = re.sub(r'^---\s*\n+', '', body)
+        body = re.sub(r'\n+---\s*$', '', body).strip()
+        body_html = _md_to_html(body)
+        posts.append({
+            "num": num,
+            "title": title,
+            "content": body_html,
+            "category": _guess_category(title),
+            "name": f"post_{num:02d}_{_slugify(title)}",
+        })
+    return posts
 
 
 def _parse_schedule_raw(raw: str) -> list[tuple[str, str | None]]:
@@ -350,8 +416,71 @@ async def cmd_cancel_template(message: Message) -> None:
     if _pending_edit.pop(message.from_user.id, None):
         await message.answer("❌ Редактирование отменено.")
         cancelled = True
+    if message.from_user.id in _pending_import:
+        _pending_import.discard(message.from_user.id)
+        await message.answer("❌ Импорт отменён.")
+        cancelled = True
     if not cancelled:
         return
+
+
+@router.message(_waiting_import)
+async def handle_import_file(message: Message, bot: Bot) -> None:
+    user_id = message.from_user.id
+    _pending_import.discard(user_id)
+    doc = message.document
+    if not doc:
+        await message.answer("❌ Жду файл, не текст. Попробуй /content import ещё раз.")
+        return
+    fname = (doc.file_name or "").lower()
+    if not (fname.endswith(".md") or fname.endswith(".txt")):
+        await message.answer("❌ Принимаю только .md или .txt файлы.")
+        return
+    try:
+        file = await bot.get_file(doc.file_id)
+        bio = io.BytesIO()
+        await bot.download_file(file.file_path, destination=bio)
+        bio.seek(0)
+        md_text = bio.read().decode("utf-8", errors="replace")
+    except Exception as e:
+        logger.warning(f"import download failed: {e}")
+        await message.answer(f"❌ Не удалось скачать файл: {e}")
+        return
+
+    posts = _parse_content_plan(md_text)
+    if not posts:
+        await message.answer(
+            "❌ В файле не нашёл постов вида:\n"
+            "<code>### ПОСТ №1 — Название</code>"
+        )
+        return
+
+    created: list = []
+    for p in posts:
+        try:
+            t = await create_template(
+                p["name"], p["content"], None, category=p["category"]
+            )
+            created.append(t)
+        except Exception as e:
+            logger.warning(f"create_template '{p['name']}' failed: {e}")
+
+    if not created:
+        await message.answer("❌ Не удалось создать шаблоны.")
+        return
+
+    by_cat: dict[str, int] = {}
+    for t in created:
+        c = t.category or "без категории"
+        by_cat[c] = by_cat.get(c, 0) + 1
+
+    lines = [f"✅ <b>Импортировано: {len(created)} шаблонов</b>\n", "<b>Категории:</b>"]
+    for c, n in sorted(by_cat.items()):
+        lines.append(f"• <code>{c}</code> — {n}")
+    lines.append("")
+    lines.append("Посмотри: <code>/content list</code>")
+    lines.append("Тест: <code>/content post {ID}</code>")
+    await message.answer("\n".join(lines))
 
 
 @router.message(_waiting_edit)
@@ -468,6 +597,7 @@ async def cmd_content(message: Message) -> None:
             f"AI-рерайт: {'✅ вкл' if ai_on else '❌ выкл'}\n\n"
             f"<b>Шаблоны:</b>\n"
             f"<code>/content add</code> — добавить шаблон (3 шага)\n"
+            f"<code>/content import</code> — массовый импорт из .md файла\n"
             f"<code>/content list</code> — все шаблоны\n"
             f"<code>/content del N</code> / <code>toggle N</code> / <code>preview N</code>\n"
             f"<code>/content categories</code> — список категорий\n\n"
@@ -490,6 +620,16 @@ async def cmd_content(message: Message) -> None:
         await message.answer(
             "📝 <b>Создание шаблона</b>\n\n"
             "Шаг 1/3: пришли короткое имя шаблона (для твоего удобства).\n"
+            "Для отмены — /cancel"
+        )
+    elif sub == "import":
+        _pending_import.add(message.from_user.id)
+        await message.answer(
+            "📥 <b>Импорт контент-плана</b>\n\n"
+            "Пришли <code>.md</code> или <code>.txt</code> файл с постами в формате:\n"
+            "<code>### ПОСТ №1 — Название</code>\n\n"
+            "Категории определятся автоматически по названиям. "
+            "<code>@KTradeClubBot</code> и <code>@cryptosyndicate33</code> заменятся на плейсхолдеры.\n\n"
             "Для отмены — /cancel"
         )
     elif sub == "list":
