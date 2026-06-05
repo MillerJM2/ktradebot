@@ -376,18 +376,33 @@ async def cb_publish(callback: CallbackQuery, bot: Bot) -> None:
 
 
 @router.callback_query(F.data.startswith("cnt_edit:"))
-async def cb_edit(callback: CallbackQuery) -> None:
+async def cb_edit(callback: CallbackQuery, bot: Bot) -> None:
     if not _is_admin(callback):
         await callback.answer()
         return
     post_id = int(callback.data.split(":", 1)[1])
     _pending_edit[callback.from_user.id] = post_id
-    await callback.answer()
-    await callback.message.reply(
-        f"✨ Пришли новый текст черновика <code>#{post_id}</code> одним сообщением.\n"
-        f"Плейсхолдеры не подставляются — отправь финальный текст.\n"
-        f"Для отмены — /cancel"
-    )
+    try:
+        await bot.send_message(
+            chat_id=callback.from_user.id,
+            text=(
+                f"✨ Пришли новый текст черновика <code>#{post_id}</code> одним сообщением.\n"
+                f"Плейсхолдеры не подставляются — отправь финальный текст.\n"
+                f"Для отмены — /cancel"
+            ),
+        )
+        await callback.answer("Жду текст в личке бота")
+    except Exception as e:
+        _pending_edit.pop(callback.from_user.id, None)
+        await callback.answer("Не могу написать в личку")
+        try:
+            await callback.message.reply(
+                "❌ Не могу написать тебе в личку. "
+                "Открой бота, нажми /start и попробуй ещё раз.\n"
+                f"<i>{e}</i>"
+            )
+        except Exception:
+            pass
 
 
 @router.callback_query(F.data.startswith("cnt_rej:"))
