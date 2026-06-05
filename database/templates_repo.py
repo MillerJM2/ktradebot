@@ -7,10 +7,16 @@ from database.models import ContentPost, ContentTemplate
 from database.session import async_session_factory
 
 
-async def create_template(name: str, text: str, photo_file_id: str | None = None) -> ContentTemplate:
+async def create_template(
+    name: str,
+    text: str,
+    photo_file_id: str | None = None,
+    category: str | None = None,
+) -> ContentTemplate:
     async with async_session_factory() as session:
         t = ContentTemplate(
             name=name,
+            category=(category or None),
             text=text,
             photo_file_id=photo_file_id,
             enabled=True,
@@ -21,11 +27,16 @@ async def create_template(name: str, text: str, photo_file_id: str | None = None
         return t
 
 
-async def list_templates(only_enabled: bool = False) -> list[ContentTemplate]:
+async def list_templates(
+    only_enabled: bool = False,
+    category: str | None = None,
+) -> list[ContentTemplate]:
     async with async_session_factory() as session:
         q = select(ContentTemplate).order_by(ContentTemplate.id.desc())
         if only_enabled:
             q = q.where(ContentTemplate.enabled.is_(True))
+        if category is not None:
+            q = q.where(ContentTemplate.category == category)
         result = await session.execute(q)
         return list(result.scalars().all())
 
@@ -97,3 +108,24 @@ async def update_post_status(post_id: int, status: str) -> None:
         p.status = status
         p.actioned_at = datetime.utcnow()
         await session.commit()
+
+
+async def get_post(post_id: int) -> ContentPost | None:
+    async with async_session_factory() as session:
+        return await session.get(ContentPost, post_id)
+
+
+async def update_post_text(post_id: int, new_text: str) -> None:
+    async with async_session_factory() as session:
+        p = await session.get(ContentPost, post_id)
+        if not p:
+            return
+        p.rendered_text = new_text
+        await session.commit()
+
+
+async def list_recent_posts(limit: int = 20) -> list[ContentPost]:
+    async with async_session_factory() as session:
+        q = select(ContentPost).order_by(ContentPost.id.desc()).limit(limit)
+        result = await session.execute(q)
+        return list(result.scalars().all())

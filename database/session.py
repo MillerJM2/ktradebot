@@ -32,6 +32,12 @@ async def _add_missing_columns(table: str, columns: dict[str, str]) -> None:
                 )
 
 
+async def _migrate_content_templates() -> None:
+    await _add_missing_columns("content_templates", {
+        "category": "TEXT",
+    })
+
+
 async def _migrate_users() -> None:
     await _add_missing_columns("users", {
         "subscription_expires_at": "DATETIME",
@@ -49,3 +55,4 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await _migrate_users()
+    await _migrate_content_templates()
