@@ -12,6 +12,7 @@ from aiogram.types import (
 from loguru import logger
 
 import uuid
+from datetime import datetime, timedelta
 
 from config import (
     ADMIN_TELEGRAM_ID,
@@ -43,6 +44,12 @@ from subscriptions.crypto_bot import (
     is_configured as cryptobot_configured,
     transfer_usdt,
 )
+from arbitrage.exchange_info import display_name as exchange_display_name
+from database.signals_repo import (
+    stats_aggregate,
+    top_routes,
+    top_symbols,
+)
 from subscriptions.tiers import PAID_TIERS, TIERS, effective_tier, features
 
 
@@ -56,6 +63,7 @@ BTN_TARIFFS = "💎 Тарифы"
 BTN_REFERRAL = "🔗 Реферальная система"
 BTN_SUPPORT = "💼 Техническая поддержка"
 BTN_DIAG = "🔍 Диагностика"
+BTN_STATS = "📈 Статистика"
 BTN_BROADCAST = "📢 Рассылка"
 
 BTN_STATUS = "📊 Статус"
@@ -75,7 +83,7 @@ def _main_keyboard(is_admin: bool) -> ReplyKeyboardMarkup:
         [KeyboardButton(text=BTN_SUPPORT)],
     ]
     if is_admin:
-        rows.append([KeyboardButton(text=BTN_DIAG)])
+        rows.append([KeyboardButton(text=BTN_DIAG), KeyboardButton(text=BTN_STATS)])
         rows.append([KeyboardButton(text=BTN_BROADCAST)])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
@@ -586,6 +594,64 @@ async def cmd_users(message: Message) -> None:
         lines.append(line)
     if len(users) > 50:
         lines.append(f"\n... и ещё {len(users) - 50}")
+    await message.answer("\n".join(lines))
+
+
+def _parse_period(text: str | None) -> tuple[timedelta, str]:
+    """Парсит '/stats 7d', '/stats 24h' и т.п. Возвращает (delta, человекочитаемая_строка)."""
+    parts = (text or "").split()
+    arg = parts[1].lower() if len(parts) > 1 else "24h"
+    if arg.endswith("d") and arg[:-1].isdigit():
+        days = int(arg[:-1])
+        return timedelta(days=days), f"{days} дн."
+    if arg.endswith("h") and arg[:-1].isdigit():
+        hours = int(arg[:-1])
+        return timedelta(hours=hours), f"{hours} ч."
+    return timedelta(hours=24), "24 ч."
+
+
+@router.message(Command("stats"))
+@router.message(F.text == BTN_STATS)
+async def cmd_stats(message: Message) -> None:
+    if not _is_admin(message):
+        return
+    delta, period_str = _parse_period(message.text)
+    since = datetime.utcnow() - delta
+
+    agg = await stats_aggregate(since)
+    pairs = await top_symbols(since, limit=5)
+    routes = await top_routes(since, limit=5)
+    users_total = await count_users()
+
+    if agg["total"] == 0:
+        await message.answer(
+            f"📈 <b>Статистика за {period_str}</b>\n\n"
+            f"Сигналов пока нет. Попробуй позже или выбери больший период: "
+            f"<code>/stats 7d</code>."
+        )
+        return
+
+    lines = [
+        f"📈 <b>Статистика за {period_str}</b>",
+        "",
+        f"Сигналов: <b>{agg['total']}</b>",
+        f"Уникальных пар: <b>{agg['unique_symbols']}</b>",
+        f"Средний чистый спред: <b>{agg['avg_profit']:.2f}%</b>",
+        f"Максимальный: <b>{agg['max_profit']:.2f}%</b>",
+        "",
+        "<b>🏆 Топ-5 пар:</b>",
+    ]
+    for sym, cnt in pairs:
+        lines.append(f"• {sym} — {cnt}")
+    lines.append("")
+    lines.append("<b>🔄 Топ-5 маршрутов:</b>")
+    for buy, sell, cnt in routes:
+        lines.append(
+            f"• {exchange_display_name(buy)} → {exchange_display_name(sell)} — {cnt}"
+        )
+    lines.append("")
+    lines.append(f"👥 Всего пользователей в БД: <b>{users_total}</b>")
+
     await message.answer("\n".join(lines))
 
 

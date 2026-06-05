@@ -40,3 +40,20 @@ class Invoice(Base):
     pay_url: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class SignalLog(Base):
+    __tablename__ = "signals_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    symbol: Mapped[str] = mapped_column(String, index=True)
+    buy_exchange: Mapped[str] = mapped_column(String, index=True)
+    sell_exchange: Mapped[str] = mapped_column(String, index=True)
+    net_profit_percent: Mapped[float] = mapped_column(Float)
+    raw_spread_percent: Mapped[float] = mapped_column(Float)
+    buy_volume_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    sell_volume_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    network: Mapped[str] = mapped_column(String, default="")
+    withdraw_fee_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    target_amount_usd: Mapped[float] = mapped_column(Float, default=1000.0)

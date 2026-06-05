@@ -18,6 +18,7 @@ from arbitrage.verifier import verify_spread
 from bot.broadcast import router as broadcast_router
 from bot.handlers import router
 from database.session import init_db
+from database.signals_repo import log_signal
 from database.users_repo import get_active_users
 from exchanges.currencies_cache import cache as currencies_cache
 from exchanges.fetcher import fetch_all_tickers
@@ -65,6 +66,12 @@ async def arbitrage_loop(bot: Bot) -> None:
             ]
             verified.sort(key=lambda v: v.net_profit_percent, reverse=True)
             logger.info(f"Прошли все фильтры: {len(verified)}")
+
+            for v in verified:
+                try:
+                    await log_signal(v)
+                except Exception as e:
+                    logger.warning(f"log_signal failed: {e}")
 
             users = await get_active_users()
             send_tasks = []
