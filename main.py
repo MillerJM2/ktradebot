@@ -17,6 +17,7 @@ from arbitrage.finder import find_spreads
 from arbitrage.verifier import verify_spread
 from bot.broadcast import router as broadcast_router
 from bot.handlers import router
+from bot.promo import router as promo_router
 from database.session import init_db
 from database.signals_repo import log_signal
 from database.users_repo import get_active_users
@@ -117,6 +118,7 @@ async def main() -> None:
     )
     dp = Dispatcher()
     dp.include_router(broadcast_router)
+    dp.include_router(promo_router)
     dp.include_router(router)
 
     from bot.runtime import runtime

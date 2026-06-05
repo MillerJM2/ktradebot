@@ -362,10 +362,16 @@ async def btn_tariffs(message: Message) -> None:
         )
     else:
         header = "💎 <b>Тарифы</b>\n\nУ тебя пока <b>нет активной подписки</b>."
+    if user.pending_promo_code:
+        header += f"\n\n🎟️ Применится промокод: <code>{user.pending_promo_code}</code>"
+    promo_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎟️ У меня есть промокод", callback_data="promo_enter")],
+    ])
     await message.answer(
         header,
         reply_markup=_main_keyboard(_is_admin(message)),
     )
+    await message.answer("Если у тебя есть промокод — введи его:", reply_markup=promo_kb)
     for tier_key in PAID_TIERS:
         await message.answer(
             _tariff_card_text(tier_key),
@@ -389,9 +395,33 @@ async def cb_buy(callback: CallbackQuery) -> None:
             "⏳ Оплата картой/криптой скоро будет доступна. Пока обратитесь по контакту из поддержки."
         )
         return
+
+    final_price = feats.price_usd
+    applied_promo: str | None = None
+    discount_percent = 0.0
+
+    if user.pending_promo_code:
+        from database.promo_repo import (
+            get_promo as _get_promo,
+            has_user_used as _has_used,
+            record_usage as _record_usage,
+            set_user_pending_promo as _set_pending,
+            validate as _validate,
+        )
+        promo = await _get_promo(user.pending_promo_code)
+        err = _validate(promo)
+        if err or promo.type != "discount" or await _has_used(promo.code, user.telegram_id):
+            await _set_pending(user.telegram_id, None)
+        else:
+            discount_percent = promo.value
+            final_price = round(feats.price_usd * (1 - discount_percent / 100), 2)
+            applied_promo = promo.code
+            await _record_usage(promo.code, user.telegram_id, tier, discount_percent)
+            await _set_pending(user.telegram_id, None)
+
     try:
         invoice = await create_invoice(
-            amount_usd=feats.price_usd,
+            amount_usd=final_price,
             description=f"Подписка {feats.name} ({feats.duration_days} дней)",
             payload=f"{user.telegram_id}:{tier}:{feats.duration_days}",
         )
@@ -406,17 +436,21 @@ async def cb_buy(callback: CallbackQuery) -> None:
         user_id=user.telegram_id,
         tier=tier,
         days=feats.duration_days,
-        amount_usd=feats.price_usd,
+        amount_usd=final_price,
         pay_url=invoice["pay_url"],
     )
     pay_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 Перейти к оплате", url=invoice["pay_url"])],
     ])
     duration_str = "пожизненно" if feats.is_lifetime else f"{feats.duration_days} дней"
+    promo_line = (
+        f"\n🎟️ Промокод <code>{applied_promo}</code>: -{discount_percent:g}%"
+        if applied_promo else ""
+    )
     await callback.message.answer(
         f"💳 <b>Счёт создан</b>\n\n"
         f"Тариф: <b>{feats.name}</b>\n"
-        f"Сумма: <b>{feats.price_usd:g} USDT</b>\n"
+        f"Сумма: <b>{final_price:g} USDT</b>{promo_line}\n"
         f"Срок: {duration_str}\n\n"
         f"Жми кнопку — оплата в @CryptoBot. После оплаты подписка активируется автоматически в течение минуты.",
         reply_markup=pay_kb,
