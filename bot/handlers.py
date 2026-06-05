@@ -63,7 +63,7 @@ from database.signals_repo import (
     top_routes,
     top_symbols,
 )
-from subscriptions.tiers import PAID_TIERS, TIERS, effective_tier, features
+from subscriptions.tiers import ACTIVE_TIERS, PAID_TIERS, TIERS, effective_tier, features, is_subscribed
 
 
 router = Router()
@@ -157,12 +157,30 @@ def _parse_referrer_from_start(text: str | None) -> int | None:
 
 async def _trial_settings() -> tuple[bool, str, int]:
     enabled = (await get_setting("trial_enabled", "true") or "true").lower() == "true"
-    tier = await get_setting("trial_tier", "base") or "base"
+    tier = await get_setting("trial_tier", "trial") or "trial"
     try:
         days = int(await get_setting("trial_days", "3") or "3")
     except ValueError:
         days = 3
     return enabled, tier, days
+
+
+async def _build_stats_blurb() -> str | None:
+    from datetime import timedelta
+    from database.signals_repo import stats_aggregate, top_symbols
+    since = datetime.utcnow() - timedelta(hours=24)
+    agg = await stats_aggregate(since)
+    if agg["total"] == 0:
+        return None
+    pairs = await top_symbols(since, limit=3)
+    top = ", ".join(s for s, _ in pairs) if pairs else "—"
+    return (
+        f"📊 <b>За последние 24 часа бот нашёл:</b>\n"
+        f"• Сигналов: <b>{agg['total']}</b>\n"
+        f"• Уникальных пар: <b>{agg['unique_symbols']}</b>\n"
+        f"• Лучший спред: <b>{agg['max_profit']:.2f}%</b>\n"
+        f"• Топ пары: {top}"
+    )
 
 
 @router.message(CommandStart())
@@ -178,7 +196,7 @@ async def cmd_start(message: Message) -> None:
     trial_granted = None
     if not is_admin:
         enabled, trial_tier, trial_days = await _trial_settings()
-        if enabled and trial_tier in PAID_TIERS:
+        if enabled and (trial_tier in PAID_TIERS or trial_tier == "trial"):
             trial_granted = await try_grant_trial(
                 message.from_user.id, trial_tier, trial_days
             )
@@ -187,8 +205,9 @@ async def cmd_start(message: Message) -> None:
 
     tier_eff = effective_tier(user.tier, user.subscription_expires_at)
     feats = features(tier_eff)
-    has_sub = tier_eff in PAID_TIERS or tier_eff == "admin"
+    has_sub = is_subscribed(tier_eff)
 
+    stats_blurb = await _build_stats_blurb()
     if trial_granted:
         body = (
             f"🎁 <b>Бесплатный доступ активирован!</b>\n\n"
@@ -198,6 +217,8 @@ async def cmd_start(message: Message) -> None:
             f"Когда триал закончится — продлишь через <b>💎 Тарифы</b>."
         )
         text = f"👋 <b>Добро пожаловать в KTradeClub</b>\n\n{body}"
+        if stats_blurb:
+            text += f"\n\n{stats_blurb}"
     elif has_sub:
         body = (
             f"Твой тариф: <b>{feats.name}</b>\n"
@@ -210,6 +231,8 @@ async def cmd_start(message: Message) -> None:
             f"👋 <b>Добро пожаловать в KTradeClub</b>\n\n"
             f"{_no_sub_text()}"
         )
+        if stats_blurb:
+            text += f"\n\n{stats_blurb}"
     await message.answer(text, reply_markup=_main_keyboard(is_admin))
 
 
@@ -220,7 +243,7 @@ async def btn_cabinet(message: Message) -> None:
     )
     tier_eff = effective_tier(user.tier, user.subscription_expires_at)
     feats = features(tier_eff)
-    has_sub = tier_eff in PAID_TIERS or tier_eff == "admin"
+    has_sub = is_subscribed(tier_eff)
     if not has_sub:
         await message.answer(
             _no_sub_text(),
@@ -257,7 +280,7 @@ async def cmd_status(message: Message) -> None:
     )
     tier_eff = effective_tier(user.tier, user.subscription_expires_at)
     feats = features(tier_eff)
-    has_sub = tier_eff in PAID_TIERS or tier_eff == "admin"
+    has_sub = is_subscribed(tier_eff)
     paused_str = "на паузе ⏸" if user.paused else "активен ✅"
 
     if has_sub:

@@ -83,6 +83,17 @@ TIERS: dict[str, TierFeatures] = {
             "3 онлайн-консультации с менеджером",
         ),
     ),
+    "trial": TierFeatures(
+        name="TRIAL",
+        price_usd=0.0,
+        old_price_usd=0.0,
+        duration_days=3,
+        min_threshold=0.5,
+        allowed_exchanges=ALL_EXCHANGES,
+        quote_currencies=("USDT", "BTC"),
+        max_signals_per_cycle=15,
+        bullets=("Бесплатный пробный доступ 3 дня",),
+    ),
     "premium": TierFeatures(
         name="PREMIUM",
         price_usd=1590.0,
@@ -117,6 +128,7 @@ TIERS: dict[str, TierFeatures] = {
 
 
 PAID_TIERS = ("base", "standart", "pro", "premium")
+ACTIVE_TIERS = ("admin", "trial") + PAID_TIERS
 
 
 def features(tier: str) -> TierFeatures:
@@ -131,3 +143,7 @@ def effective_tier(tier: str, expires_at: datetime | None) -> str:
     if expires_at < datetime.utcnow():
         return "free"
     return tier
+
+
+def is_subscribed(tier: str) -> bool:
+    return tier in ACTIVE_TIERS

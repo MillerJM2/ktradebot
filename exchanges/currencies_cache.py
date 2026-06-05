@@ -110,7 +110,7 @@ class CurrenciesCache:
             return False
         if any(n["withdraw"] for n in info["networks"].values()):
             return True
-        return info["top_withdraw"] and not info["networks"]
+        return bool(info["top_withdraw"])
 
     def can_deposit(self, exchange: str, coin: str) -> bool:
         info = self._coin_info(exchange, coin)
@@ -118,7 +118,7 @@ class CurrenciesCache:
             return False
         if any(n["deposit"] for n in info["networks"].values()):
             return True
-        return info["top_deposit"] and not info["networks"]
+        return bool(info["top_deposit"])
 
     def find_common_network(
         self, buy_exchange: str, sell_exchange: str, coin: str
@@ -130,8 +130,6 @@ class CurrenciesCache:
             return None
         buy_nets = buy_info["networks"]
         sell_nets = sell_info["networks"]
-        if not buy_nets or not sell_nets:
-            return None
 
         candidates: list[tuple[str, float]] = []
         for net_name, buy_net in buy_nets.items():
@@ -140,10 +138,24 @@ class CurrenciesCache:
             sell_net = sell_nets.get(net_name)
             if sell_net and sell_net["deposit"]:
                 candidates.append((net_name, buy_net["fee"]))
-        if not candidates:
-            return None
-        candidates.sort(key=lambda x: x[1])
-        return candidates[0]
+        if candidates:
+            candidates.sort(key=lambda x: x[1])
+            return candidates[0]
+
+        # Фолбэк: если одна из сторон не отдала network details, но top-level allow
+        # — берём данные с той стороны, что отдала
+        if buy_nets and not sell_nets and sell_info.get("top_deposit"):
+            for net_name, buy_net in buy_nets.items():
+                if buy_net["withdraw"]:
+                    return (net_name, buy_net["fee"])
+        if sell_nets and not buy_nets and buy_info.get("top_withdraw"):
+            for net_name, sell_net in sell_nets.items():
+                if sell_net["deposit"]:
+                    return (net_name, 0.0)
+        if not buy_nets and not sell_nets:
+            if buy_info.get("top_withdraw") and sell_info.get("top_deposit"):
+                return ("default", 0.0)
+        return None
 
 
 cache = CurrenciesCache()

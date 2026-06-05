@@ -13,6 +13,7 @@ from config import (
     MAX_CANDIDATES_FOR_VERIFY,
     POLL_INTERVAL_SECONDS,
     TELEGRAM_BOT_TOKEN,
+    TRIAL_SIGNAL_REPEAT_INTERVAL_MIN,
     USER_SIGNAL_REPEAT_INTERVAL_MIN,
 )
 from arbitrage.finder import find_spreads
@@ -66,11 +67,14 @@ def _cleanup_log_history() -> None:
         _log_signal_history.pop(k, None)
 
 
-def _user_should_receive(user_id: int, symbol: str, buy_ex: str, sell_ex: str) -> bool:
+def _user_should_receive(
+    user_id: int, symbol: str, buy_ex: str, sell_ex: str, is_trial: bool = False
+) -> bool:
     key = (user_id, symbol, buy_ex, sell_ex)
     now = datetime.utcnow()
     last = _user_signal_history.get(key)
-    interval = timedelta(minutes=USER_SIGNAL_REPEAT_INTERVAL_MIN)
+    minutes = TRIAL_SIGNAL_REPEAT_INTERVAL_MIN if is_trial else USER_SIGNAL_REPEAT_INTERVAL_MIN
+    interval = timedelta(minutes=minutes)
     if last and now - last < interval:
         return False
     _user_signal_history[key] = now
@@ -149,11 +153,13 @@ async def arbitrage_loop(bot: Bot) -> None:
                     and v.symbol.split("/", 1)[1] in feats.quote_currencies
                 ]
                 sent_count = 0
+                is_trial = tier == "trial"
                 for sig in personal:
                     if sent_count >= feats.max_signals_per_cycle:
                         break
                     if not _user_should_receive(
-                        user.telegram_id, sig.symbol, sig.buy_exchange, sig.sell_exchange
+                        user.telegram_id, sig.symbol, sig.buy_exchange,
+                        sig.sell_exchange, is_trial=is_trial,
                     ):
                         continue
                     send_tasks.append(
