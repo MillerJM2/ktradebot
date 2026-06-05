@@ -20,6 +20,7 @@ from config import (
     CHANNEL_URL,
     MIN_WITHDRAW_USD,
     PROMO_UNTIL_DATE,
+    PROMO_VISIBLE_TO_USERS,
     REFERRAL_PERCENT,
 )
 from bot.runtime import runtime
@@ -362,16 +363,17 @@ async def btn_tariffs(message: Message) -> None:
         )
     else:
         header = "💎 <b>Тарифы</b>\n\nУ тебя пока <b>нет активной подписки</b>."
-    if user.pending_promo_code:
+    if PROMO_VISIBLE_TO_USERS and user.pending_promo_code:
         header += f"\n\n🎟️ Применится промокод: <code>{user.pending_promo_code}</code>"
-    promo_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎟️ У меня есть промокод", callback_data="promo_enter")],
-    ])
     await message.answer(
         header,
         reply_markup=_main_keyboard(_is_admin(message)),
     )
-    await message.answer("Если у тебя есть промокод — введи его:", reply_markup=promo_kb)
+    if PROMO_VISIBLE_TO_USERS:
+        promo_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎟️ У меня есть промокод", callback_data="promo_enter")],
+        ])
+        await message.answer("Если у тебя есть промокод — введи его:", reply_markup=promo_kb)
     for tier_key in PAID_TIERS:
         await message.answer(
             _tariff_card_text(tier_key),

@@ -24,6 +24,8 @@ EXPIRY_CHECK_INTERVAL_SECONDS = 3600
 CHANNEL_URL = "https://t.me/cryptosyndicate33"
 CHANNEL_NAME = "Crypto Syndicate"
 
+PROMO_VISIBLE_TO_USERS = False
+
 EXCHANGES = [
     "binance", "bybit", "okx", "kucoin", "gateio", "mexc",
     "bitget", "bingx", "htx", "bitfinex",
