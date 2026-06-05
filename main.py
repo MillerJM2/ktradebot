@@ -17,6 +17,10 @@ from arbitrage.finder import find_spreads
 from arbitrage.verifier import verify_spread
 from bot.broadcast import router as broadcast_router
 from bot.channel import router as channel_router, try_propose as try_propose_channel
+from bot.content import (
+    content_scheduler_loop,
+    router as content_router,
+)
 from bot.handlers import router
 from bot.promo import router as promo_router
 from database.session import init_db
@@ -125,6 +129,7 @@ async def main() -> None:
     dp.include_router(broadcast_router)
     dp.include_router(promo_router)
     dp.include_router(channel_router)
+    dp.include_router(content_router)
     dp.include_router(router)
 
     from bot.runtime import runtime
@@ -135,6 +140,7 @@ async def main() -> None:
     asyncio.create_task(arbitrage_loop(bot))
     asyncio.create_task(invoice_poller_loop(bot))
     asyncio.create_task(expiry_notifier_loop(bot))
+    asyncio.create_task(content_scheduler_loop(bot))
 
     logger.info("Бот запущен. Жду команды в Telegram...")
     await dp.start_polling(bot)

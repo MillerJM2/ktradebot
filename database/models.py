@@ -50,6 +50,31 @@ class BotSetting(Base):
     value: Mapped[str] = mapped_column(String)
 
 
+class ContentTemplate(Base):
+    __tablename__ = "content_templates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String)
+    text: Mapped[str] = mapped_column(String)
+    photo_file_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ContentPost(Base):
+    __tablename__ = "content_posts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    template_id: Mapped[int] = mapped_column(Integer, index=True)
+    admin_chat_id: Mapped[int] = mapped_column(BigInteger)
+    admin_message_id: Mapped[int] = mapped_column(Integer)
+    rendered_text: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String, default="draft", index=True)  # draft|published|rejected
+    scheduled_slot: Mapped[str] = mapped_column(String)  # "2026-05-30T10:00"
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    actioned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class PromoCode(Base):
     __tablename__ = "promo_codes"
 
