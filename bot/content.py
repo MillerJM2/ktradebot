@@ -14,6 +14,7 @@ from aiogram.types import (
 )
 from loguru import logger
 
+from bot.admins import is_admin as _is_admin_uid
 from bot.runtime import runtime
 from config import ADMIN_TELEGRAM_ID, CHANNEL_URL
 from database.settings_repo import get_setting, set_setting
@@ -42,7 +43,8 @@ _pending_template_input: dict[int, dict] = {}  # admin_id -> {"step": "await_nam
 
 
 def _is_admin(message_or_callback) -> bool:
-    return message_or_callback.from_user.id == ADMIN_TELEGRAM_ID
+    user = message_or_callback.from_user
+    return user is not None and _is_admin_uid(user.id)
 
 
 def _waiting_template(message: Message) -> bool:

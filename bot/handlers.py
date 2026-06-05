@@ -23,20 +23,29 @@ from config import (
     PROMO_VISIBLE_TO_USERS,
     REFERRAL_PERCENT,
 )
+from bot.admins import (
+    add_to_cache as _admin_add_cache,
+    is_admin as _is_admin_uid,
+    is_super_admin as _is_super_admin_uid,
+    remove_from_cache as _admin_remove_cache,
+)
 from bot.runtime import runtime
 from database.invoices_repo import create_invoice as save_invoice
 from database.users_repo import (
     count_referrals,
     count_users,
+    find_user_by_id_or_username,
     find_user_by_username,
     get_or_create_user,
     grant_subscription,
+    list_admin_users,
     list_users,
     restore_referral_balance,
     revoke_subscription,
     set_paused,
     set_referrer,
     set_threshold,
+    set_user_admin,
     withdraw_referral_balance,
 )
 from subscriptions.crypto_bot import (
@@ -103,7 +112,11 @@ def _cabinet_keyboard() -> ReplyKeyboardMarkup:
 
 
 def _is_admin(message: Message) -> bool:
-    return message.from_user is not None and message.from_user.id == ADMIN_TELEGRAM_ID
+    return _is_admin_uid(message.from_user.id if message.from_user else None)
+
+
+def _is_super_admin(message: Message) -> bool:
+    return _is_super_admin_uid(message.from_user.id if message.from_user else None)
 
 
 async def _kb(message: Message) -> ReplyKeyboardMarkup:
@@ -609,6 +622,89 @@ async def cmd_revoke(message: Message) -> None:
         return
     await revoke_subscription(u.telegram_id)
     await message.answer(f"✅ Подписка отозвана у {u.username or u.telegram_id}.")
+
+
+@router.message(Command("admin"))
+async def cmd_admin(message: Message) -> None:
+    if not _is_admin(message):
+        return
+    parts = (message.text or "").split(maxsplit=2)
+    if len(parts) < 2:
+        admins = await list_admin_users()
+        lines = [
+            f"<b>👑 Управление админами</b>\n",
+            f"<b>Super-admin:</b> <code>{ADMIN_TELEGRAM_ID}</code>",
+            "",
+            "<b>Доп. админы:</b>",
+        ]
+        if admins:
+            for a in admins:
+                lines.append(f"• {a.username or a.telegram_id} (<code>{a.telegram_id}</code>)")
+        else:
+            lines.append("— нет")
+        lines += [
+            "",
+            "<b>Команды (только super-admin):</b>",
+            "<code>/admin add @username</code> или <code>/admin add 12345678</code>",
+            "<code>/admin remove @username</code> или <code>/admin remove 12345678</code>",
+            "<code>/admin list</code>",
+        ]
+        await message.answer("\n".join(lines))
+        return
+
+    sub = parts[1].lower()
+    if sub == "list":
+        admins = await list_admin_users()
+        if not admins:
+            await message.answer(
+                f"Доп. админов нет. Super-admin: <code>{ADMIN_TELEGRAM_ID}</code>"
+            )
+            return
+        lines = [f"<b>Доп. админы:</b>"]
+        for a in admins:
+            lines.append(f"• {a.username or a.telegram_id} (<code>{a.telegram_id}</code>)")
+        lines.append(f"\nSuper-admin: <code>{ADMIN_TELEGRAM_ID}</code>")
+        await message.answer("\n".join(lines))
+        return
+
+    if sub in ("add", "remove"):
+        if not _is_super_admin(message):
+            await message.answer("⛔ Только super-admin может управлять админами.")
+            return
+        if len(parts) < 3:
+            await message.answer(
+                f"Использование: <code>/admin {sub} @username</code> или "
+                f"<code>/admin {sub} 12345678</code>"
+            )
+            return
+        target = parts[2]
+        u = await find_user_by_id_or_username(target)
+        if u is None:
+            await message.answer(
+                "❌ Пользователь не найден в БД. "
+                "Он должен хотя бы раз нажать /start у бота."
+            )
+            return
+        if sub == "add":
+            if u.telegram_id == ADMIN_TELEGRAM_ID:
+                await message.answer("ℹ️ Этот пользователь и так super-admin.")
+                return
+            await set_user_admin(u.telegram_id, True)
+            _admin_add_cache(u.telegram_id)
+            await message.answer(
+                f"✅ {u.username or u.telegram_id} теперь админ."
+            )
+        else:
+            if u.telegram_id == ADMIN_TELEGRAM_ID:
+                await message.answer("❌ Нельзя снять super-admin.")
+                return
+            await set_user_admin(u.telegram_id, False)
+            _admin_remove_cache(u.telegram_id)
+            await message.answer(
+                f"✅ {u.username or u.telegram_id} больше не админ."
+            )
+        return
+    await message.answer("Неизвестная подкоманда. См. <code>/admin</code>.")
 
 
 @router.message(Command("users"))

@@ -10,7 +10,7 @@ from aiogram.types import (
 )
 from loguru import logger
 
-from config import ADMIN_TELEGRAM_ID
+from bot.admins import is_admin as _is_admin_uid
 from database.promo_repo import (
     create_promo,
     delete_promo,
@@ -32,7 +32,7 @@ _pending_input: dict[int, bool] = {}
 
 
 def _is_admin(message: Message) -> bool:
-    return message.from_user is not None and message.from_user.id == ADMIN_TELEGRAM_ID
+    return message.from_user is not None and _is_admin_uid(message.from_user.id)
 
 
 def _waiting_promo(message: Message) -> bool:

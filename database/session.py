@@ -40,6 +40,7 @@ async def _migrate_users() -> None:
         "total_referral_earned_usd": "FLOAT DEFAULT 0",
         "reminder_milestone": "INTEGER DEFAULT 999",
         "pending_promo_code": "TEXT",
+        "is_admin": "INTEGER DEFAULT 0",
     })
 
 

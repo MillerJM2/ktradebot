@@ -12,6 +12,7 @@ from aiogram.types import (
 )
 from loguru import logger
 
+from bot.admins import is_admin as _is_admin_uid
 from bot.runtime import runtime
 from config import ADMIN_TELEGRAM_ID, CHANNEL_URL
 from database.settings_repo import (
@@ -32,7 +33,8 @@ _lock = asyncio.Lock()
 
 
 def _is_admin(message_or_callback) -> bool:
-    return message_or_callback.from_user.id == ADMIN_TELEGRAM_ID
+    user = message_or_callback.from_user
+    return user is not None and _is_admin_uid(user.id)
 
 
 async def _channel_id() -> str | None:
@@ -110,15 +112,17 @@ async def try_propose(bot: Bot, spread, base_text: str) -> None:
                 logger.warning(f"channel auto-publish failed: {e}")
             return
 
-        try:
-            await bot.send_message(
-                ADMIN_TELEGRAM_ID,
-                f"📺 <b>Кандидат на публикацию в канале</b>\n\n{channel_text}",
-                reply_markup=_admin_preview_kb(*key),
-                disable_web_page_preview=True,
-            )
-        except Exception as e:
-            logger.warning(f"admin preview failed: {e}")
+        from bot.admins import known_admin_ids
+        for admin_id in known_admin_ids():
+            try:
+                await bot.send_message(
+                    admin_id,
+                    f"📺 <b>Кандидат на публикацию в канале</b>\n\n{channel_text}",
+                    reply_markup=_admin_preview_kb(*key),
+                    disable_web_page_preview=True,
+                )
+            except Exception as e:
+                logger.warning(f"admin preview to {admin_id} failed: {e}")
 
 
 @router.callback_query(F.data == "chskip")

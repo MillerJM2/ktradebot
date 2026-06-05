@@ -121,6 +121,9 @@ async def main() -> None:
     logger.info("Инициализация БД...")
     await init_db()
 
+    from bot.admins import reload_from_db as reload_admins
+    await reload_admins()
+
     bot = Bot(
         token=TELEGRAM_BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),

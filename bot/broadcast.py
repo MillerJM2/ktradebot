@@ -11,7 +11,7 @@ from aiogram.types import (
 )
 from loguru import logger
 
-from config import ADMIN_TELEGRAM_ID
+from bot.admins import is_admin as _is_admin_uid
 from database.users_repo import list_users
 
 
@@ -23,7 +23,7 @@ _pending: dict[int, dict] = {}
 
 def _is_admin(message_or_callback) -> bool:
     user = message_or_callback.from_user
-    return user is not None and user.id == ADMIN_TELEGRAM_ID
+    return user is not None and _is_admin_uid(user.id)
 
 
 def _waiting_for_content(message: Message) -> bool:

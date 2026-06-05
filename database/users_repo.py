@@ -138,6 +138,34 @@ async def restore_referral_balance(telegram_id: int, amount_usd: float) -> None:
         await session.commit()
 
 
+async def list_admin_user_ids() -> list[int]:
+    """Все telegram_id с пометкой is_admin=True (без учёта super-admin из env)."""
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(User.telegram_id).where(User.is_admin.is_(True))
+        )
+        return [int(r[0]) for r in result.all()]
+
+
+async def set_user_admin(user_id: int, value: bool) -> bool:
+    """True если пользователь существует и поле обновлено."""
+    async with async_session_factory() as session:
+        user = await session.get(User, user_id)
+        if user is None:
+            return False
+        user.is_admin = value
+        await session.commit()
+        return True
+
+
+async def list_admin_users() -> list[User]:
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(User).where(User.is_admin.is_(True))
+        )
+        return list(result.scalars().all())
+
+
 async def count_referrals(referrer_id: int) -> int:
     async with async_session_factory() as session:
         result = await session.execute(
@@ -185,6 +213,13 @@ async def list_users() -> list[User]:
     async with async_session_factory() as session:
         result = await session.execute(select(User))
         return list(result.scalars().all())
+
+
+async def find_user_by_id_or_username(target: str) -> User | None:
+    target = target.strip()
+    if target.startswith("@") or not target.lstrip("-").isdigit():
+        return await find_user_by_username(target)
+    return await get_user(int(target))
 
 
 async def count_users() -> int:
