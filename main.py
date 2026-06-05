@@ -1,6 +1,7 @@
 """Точка входа: Telegram-бот + цикл поиска и верификации вилок."""
 import asyncio
 import sys
+from datetime import datetime, timedelta
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -12,6 +13,7 @@ from config import (
     MAX_CANDIDATES_FOR_VERIFY,
     POLL_INTERVAL_SECONDS,
     TELEGRAM_BOT_TOKEN,
+    USER_SIGNAL_REPEAT_INTERVAL_MIN,
 )
 from arbitrage.finder import find_spreads
 from arbitrage.verifier import verify_spread
@@ -35,6 +37,29 @@ from subscriptions.tiers import effective_tier, features
 
 logger.remove()
 logger.add(sys.stderr, level="INFO")
+
+
+# (user_id, symbol, buy_ex, sell_ex) → datetime последней отправки.
+# Не даём одинаковый сигнал тому же юзеру чаще раза в USER_SIGNAL_REPEAT_INTERVAL_MIN мин.
+_user_signal_history: dict[tuple[int, str, str, str], datetime] = {}
+
+
+def _user_should_receive(user_id: int, symbol: str, buy_ex: str, sell_ex: str) -> bool:
+    key = (user_id, symbol, buy_ex, sell_ex)
+    now = datetime.utcnow()
+    last = _user_signal_history.get(key)
+    interval = timedelta(minutes=USER_SIGNAL_REPEAT_INTERVAL_MIN)
+    if last and now - last < interval:
+        return False
+    _user_signal_history[key] = now
+    return True
+
+
+def _cleanup_signal_history() -> None:
+    cutoff = datetime.utcnow() - timedelta(minutes=USER_SIGNAL_REPEAT_INTERVAL_MIN * 2)
+    stale = [k for k, t in _user_signal_history.items() if t < cutoff]
+    for k in stale:
+        _user_signal_history.pop(k, None)
 
 
 async def _send_signal_safe(bot: Bot, user_id: int, text: str) -> None:
@@ -83,6 +108,7 @@ async def arbitrage_loop(bot: Bot) -> None:
                 except Exception as e:
                     logger.warning(f"channel propose failed: {e}")
 
+            _cleanup_signal_history()
             users = await get_active_users()
             send_tasks = []
             for user in users:
@@ -98,10 +124,18 @@ async def arbitrage_loop(bot: Bot) -> None:
                     and v.sell_exchange in feats.allowed_exchanges
                     and v.symbol.split("/", 1)[1] in feats.quote_currencies
                 ]
-                for sig in personal[:feats.max_signals_per_cycle]:
+                sent_count = 0
+                for sig in personal:
+                    if sent_count >= feats.max_signals_per_cycle:
+                        break
+                    if not _user_should_receive(
+                        user.telegram_id, sig.symbol, sig.buy_exchange, sig.sell_exchange
+                    ):
+                        continue
                     send_tasks.append(
                         _send_signal_safe(bot, user.telegram_id, sig.format_message())
                     )
+                    sent_count += 1
             if send_tasks:
                 await asyncio.gather(*send_tasks, return_exceptions=True)
         except Exception as e:
