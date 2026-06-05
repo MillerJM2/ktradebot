@@ -55,6 +55,39 @@ async def set_paused(telegram_id: int, paused: bool) -> None:
         await session.commit()
 
 
+async def try_grant_trial(
+    telegram_id: int, tier: str, days: int
+) -> User | None:
+    """Выдаёт триал только если ещё не использовал и нет активной платной подписки.
+    Возвращает обновлённый User или None если триал недоступен.
+    """
+    async with async_session_factory() as session:
+        user = await session.get(User, telegram_id)
+        if user is None:
+            return None
+        if user.trial_used:
+            return None
+        if user.tier == "admin":
+            return None
+        if user.subscription_expires_at and user.subscription_expires_at > datetime.utcnow():
+            return None
+        user.tier = tier
+        user.subscription_expires_at = datetime.utcnow() + timedelta(days=days)
+        user.trial_used = True
+        user.reminder_milestone = 999
+        await session.commit()
+        await session.refresh(user)
+        return user
+
+
+async def count_trial_users() -> int:
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(User).where(User.trial_used.is_(True))
+        )
+        return len(list(result.scalars().all()))
+
+
 async def grant_subscription(
     telegram_id: int, tier: str, days: int
 ) -> User | None:

@@ -31,8 +31,10 @@ from bot.admins import (
 )
 from bot.runtime import runtime
 from database.invoices_repo import create_invoice as save_invoice
+from database.settings_repo import get_setting, set_setting
 from database.users_repo import (
     count_referrals,
+    count_trial_users,
     count_users,
     find_user_by_id_or_username,
     find_user_by_username,
@@ -46,6 +48,7 @@ from database.users_repo import (
     set_referrer,
     set_threshold,
     set_user_admin,
+    try_grant_trial,
     withdraw_referral_balance,
 )
 from subscriptions.crypto_bot import (
@@ -152,6 +155,16 @@ def _parse_referrer_from_start(text: str | None) -> int | None:
         return None
 
 
+async def _trial_settings() -> tuple[bool, str, int]:
+    enabled = (await get_setting("trial_enabled", "true") or "true").lower() == "true"
+    tier = await get_setting("trial_tier", "base") or "base"
+    try:
+        days = int(await get_setting("trial_days", "3") or "3")
+    except ValueError:
+        days = 3
+    return enabled, tier, days
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     referrer_id = _parse_referrer_from_start(message.text)
@@ -161,10 +174,31 @@ async def cmd_start(message: Message) -> None:
     if referrer_id is not None and user.referrer_id is None:
         await set_referrer(message.from_user.id, referrer_id)
     is_admin = _is_admin(message)
+
+    trial_granted = None
+    if not is_admin:
+        enabled, trial_tier, trial_days = await _trial_settings()
+        if enabled and trial_tier in PAID_TIERS:
+            trial_granted = await try_grant_trial(
+                message.from_user.id, trial_tier, trial_days
+            )
+            if trial_granted:
+                user = trial_granted
+
     tier_eff = effective_tier(user.tier, user.subscription_expires_at)
     feats = features(tier_eff)
     has_sub = tier_eff in PAID_TIERS or tier_eff == "admin"
-    if has_sub:
+
+    if trial_granted:
+        body = (
+            f"🎁 <b>Бесплатный доступ активирован!</b>\n\n"
+            f"Тариф: <b>{feats.name}</b>\n"
+            f"Действует до: {_format_expiry(user.subscription_expires_at)}\n\n"
+            f"Сигналы начнут приходить в течение пары минут. "
+            f"Когда триал закончится — продлишь через <b>💎 Тарифы</b>."
+        )
+        text = f"👋 <b>Добро пожаловать в KTradeClub</b>\n\n{body}"
+    elif has_sub:
         body = (
             f"Твой тариф: <b>{feats.name}</b>\n"
             f"Доступно бирж: {len(feats.allowed_exchanges)}\n"
@@ -622,6 +656,56 @@ async def cmd_revoke(message: Message) -> None:
         return
     await revoke_subscription(u.telegram_id)
     await message.answer(f"✅ Подписка отозвана у {u.username or u.telegram_id}.")
+
+
+@router.message(Command("trial"))
+async def cmd_trial(message: Message) -> None:
+    if not _is_admin(message):
+        return
+    parts = (message.text or "").split(maxsplit=2)
+    enabled, tier, days = await _trial_settings()
+
+    if len(parts) < 2:
+        used = await count_trial_users()
+        total = await count_users()
+        await message.answer(
+            f"<b>🎁 Триал</b>\n\n"
+            f"Статус: <b>{'✅ включён' if enabled else '⏸ выключен'}</b>\n"
+            f"Тариф: <b>{features(tier).name}</b>\n"
+            f"Длительность: <b>{days} дней</b>\n\n"
+            f"Использовали: <b>{used}</b> из <b>{total}</b> юзеров\n\n"
+            f"<b>Команды:</b>\n"
+            f"<code>/trial on</code> / <code>off</code>\n"
+            f"<code>/trial tier base|standart|pro|premium</code>\n"
+            f"<code>/trial days 3</code>"
+        )
+        return
+
+    sub = parts[1].lower()
+    arg = parts[2] if len(parts) > 2 else ""
+
+    if sub in ("on", "off"):
+        await set_setting("trial_enabled", "true" if sub == "on" else "false")
+        await message.answer(f"✅ Триал {'включён' if sub == 'on' else 'выключен'}.")
+    elif sub == "tier":
+        if arg.lower() not in PAID_TIERS:
+            await message.answer(f"❌ Тариф должен быть: {', '.join(PAID_TIERS)}")
+            return
+        await set_setting("trial_tier", arg.lower())
+        await message.answer(f"✅ Триальный тариф: <b>{features(arg.lower()).name}</b>")
+    elif sub == "days":
+        try:
+            d = int(arg)
+        except ValueError:
+            await message.answer("❌ Нужно целое число дней.")
+            return
+        if d < 1 or d > 30:
+            await message.answer("❌ Дней должно быть от 1 до 30.")
+            return
+        await set_setting("trial_days", str(d))
+        await message.answer(f"✅ Длительность триала: <b>{d} дней</b>")
+    else:
+        await message.answer("Неизвестная подкоманда. /trial — справка.")
 
 
 @router.message(Command("admin"))

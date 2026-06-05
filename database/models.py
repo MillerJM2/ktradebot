@@ -28,6 +28,7 @@ class User(Base):
     reminder_milestone: Mapped[int] = mapped_column(Integer, default=999)
     pending_promo_code: Mapped[str | None] = mapped_column(String, nullable=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    trial_used: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class Invoice(Base):

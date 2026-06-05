@@ -47,6 +47,7 @@ async def _migrate_users() -> None:
         "reminder_milestone": "INTEGER DEFAULT 999",
         "pending_promo_code": "TEXT",
         "is_admin": "INTEGER DEFAULT 0",
+        "trial_used": "INTEGER DEFAULT 0",
     })
 
 

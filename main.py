@@ -43,6 +43,28 @@ logger.add(sys.stderr, level="INFO")
 # Не даём одинаковый сигнал тому же юзеру чаще раза в USER_SIGNAL_REPEAT_INTERVAL_MIN мин.
 _user_signal_history: dict[tuple[int, str, str, str], datetime] = {}
 
+# (symbol, buy_ex, sell_ex) → datetime последнего лога.
+# Чтобы статистика не раздувалась из-за повторных циклов с тем же спредом.
+_log_signal_history: dict[tuple[str, str, str], datetime] = {}
+
+
+def _should_log_signal(symbol: str, buy_ex: str, sell_ex: str) -> bool:
+    key = (symbol, buy_ex, sell_ex)
+    now = datetime.utcnow()
+    last = _log_signal_history.get(key)
+    interval = timedelta(minutes=USER_SIGNAL_REPEAT_INTERVAL_MIN)
+    if last and now - last < interval:
+        return False
+    _log_signal_history[key] = now
+    return True
+
+
+def _cleanup_log_history() -> None:
+    cutoff = datetime.utcnow() - timedelta(minutes=USER_SIGNAL_REPEAT_INTERVAL_MIN * 2)
+    stale = [k for k, t in _log_signal_history.items() if t < cutoff]
+    for k in stale:
+        _log_signal_history.pop(k, None)
+
 
 def _user_should_receive(user_id: int, symbol: str, buy_ex: str, sell_ex: str) -> bool:
     key = (user_id, symbol, buy_ex, sell_ex)
@@ -98,11 +120,13 @@ async def arbitrage_loop(bot: Bot) -> None:
             verified.sort(key=lambda v: v.net_profit_percent, reverse=True)
             logger.info(f"Прошли все фильтры: {len(verified)}")
 
+            _cleanup_log_history()
             for v in verified:
-                try:
-                    await log_signal(v)
-                except Exception as e:
-                    logger.warning(f"log_signal failed: {e}")
+                if _should_log_signal(v.symbol, v.buy_exchange, v.sell_exchange):
+                    try:
+                        await log_signal(v)
+                    except Exception as e:
+                        logger.warning(f"log_signal failed: {e}")
                 try:
                     await try_propose_channel(bot, v, v.format_message())
                 except Exception as e:
