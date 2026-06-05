@@ -43,6 +43,13 @@ class Invoice(Base):
     paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class BotSetting(Base):
+    __tablename__ = "bot_settings"
+
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[str] = mapped_column(String)
+
+
 class PromoCode(Base):
     __tablename__ = "promo_codes"
 

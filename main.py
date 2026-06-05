@@ -16,6 +16,7 @@ from config import (
 from arbitrage.finder import find_spreads
 from arbitrage.verifier import verify_spread
 from bot.broadcast import router as broadcast_router
+from bot.channel import router as channel_router, try_propose as try_propose_channel
 from bot.handlers import router
 from bot.promo import router as promo_router
 from database.session import init_db
@@ -73,6 +74,10 @@ async def arbitrage_loop(bot: Bot) -> None:
                     await log_signal(v)
                 except Exception as e:
                     logger.warning(f"log_signal failed: {e}")
+                try:
+                    await try_propose_channel(bot, v, v.format_message())
+                except Exception as e:
+                    logger.warning(f"channel propose failed: {e}")
 
             users = await get_active_users()
             send_tasks = []
@@ -119,6 +124,7 @@ async def main() -> None:
     dp = Dispatcher()
     dp.include_router(broadcast_router)
     dp.include_router(promo_router)
+    dp.include_router(channel_router)
     dp.include_router(router)
 
     from bot.runtime import runtime
