@@ -334,8 +334,8 @@ async def cmd_content(message: Message) -> None:
         return
     parts = (message.text or "").split(maxsplit=2)
     if len(parts) < 2:
-        admin_ch = await _get_admin_channel_id() or "<не задан>"
-        main_ch = await _get_main_channel_id() or "<не задан>"
+        admin_ch = await _get_admin_channel_id() or "не задан"
+        main_ch = await _get_main_channel_id() or "не задан"
         schedule = ", ".join(await _get_schedule())
         ai_on = (await get_setting("content_ai_enabled", "false") or "false").lower() == "true"
         await message.answer(

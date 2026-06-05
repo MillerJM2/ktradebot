@@ -174,7 +174,7 @@ async def cmd_channel(message: Message) -> None:
         return
     parts = (message.text or "").split(maxsplit=2)
     if len(parts) < 2:
-        cid = await _channel_id() or "<не задан>"
+        cid = await _channel_id() or "не задан"
         enabled = "✅ включён" if await _channel_enabled() else "❌ выключен"
         auto = "✅ авто" if await _auto_publish() else "🤚 ручной (превью админу)"
         min_p = await _min_profit()
